@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Validation des pièces</title>
+<!-- Widget Grist : contrôle des pièces jointes d'un dossier. Paramètre d'URL requis : ?demarche=<numéro>. Accès complet requis. -->
+<script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
+<style>
+  :root {
+    --bleu: #000091; --bleu-clair: #e3e3fd; --texte: #161616; --gris: #666; --bord: #ddd; --fond: #f6f6f6;
+    --vert: #18753c; --vert-clair: #b8fec9; --orange: #b34000; --orange-clair: #ffe9e6; --jaune-clair: #feecc2; --rouge: #ce0500;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 Marianne, system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--texte); background: #fff; }
+  .app { display: grid; grid-template-columns: 300px 1fr; height: 100vh; }
+  aside { border-right: 1px solid var(--bord); display: flex; flex-direction: column; min-height: 0; background: var(--fond); }
+  aside header { padding: 12px; border-bottom: 1px solid var(--bord); }
+  aside h1 { font-size: 15px; margin: 0 0 8px; color: var(--bleu); }
+  input[type=search] { width: 100%; padding: 7px 9px; border: 1px solid var(--bord); border-radius: 4px; font: inherit; }
+  .filtres { display: flex; gap: 6px; margin-top: 8px; }
+  .filtres button { flex: 1; }
+  .liste { overflow-y: auto; flex: 1; }
+  .item { padding: 10px 12px; border-bottom: 1px solid var(--bord); cursor: pointer; background: #fff; }
+  .item:hover { background: var(--bleu-clair); }
+  .item.actif { background: var(--bleu-clair); box-shadow: inset 3px 0 0 var(--bleu); }
+  .item .nom { font-weight: 600; }
+  .item .meta { color: var(--gris); font-size: 12px; display: flex; justify-content: space-between; gap: 6px; margin-top: 2px; }
+  .pastilles { display: flex; gap: 3px; margin-top: 5px; }
+  .pastille { width: 22px; height: 6px; border-radius: 3px; background: var(--bord); }
+  .pastille.Valide { background: var(--vert); } .pastille.Partiel { background: #d69a00; } .pastille.Non { background: var(--rouge); }
+  main { overflow-y: auto; padding: 18px 22px 40px; min-width: 0; }
+  .vide { color: var(--gris); padding: 40px; text-align: center; }
+  .entete { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+  .entete h2 { margin: 0; font-size: 20px; }
+  .entete .sous { color: var(--gris); margin-top: 2px; }
+  .liens { display: flex; gap: 8px; flex-wrap: wrap; }
+  a.bouton, button { font: inherit; border-radius: 4px; padding: 6px 12px; cursor: pointer; border: 1px solid var(--bleu); background: #fff; color: var(--bleu); text-decoration: none; display: inline-block; }
+  button.plein, a.plein { background: var(--bleu); color: #fff; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; background: var(--bleu-clair); color: var(--bleu); }
+  .badge.alerte { background: var(--orange-clair); color: var(--orange); }
+  .grille { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px 18px; margin: 14px 0 6px; padding: 12px 14px; background: var(--fond); border-radius: 6px; }
+  .grille dt { color: var(--gris); font-size: 12px; } .grille dd { margin: 0 0 4px; font-weight: 500; overflow-wrap: anywhere; }
+  .resume { margin: 8px 0 0; padding: 10px 14px; border-left: 3px solid var(--bord); color: #333; white-space: pre-wrap; max-height: 7.5em; overflow: auto; }
+  h3 { font-size: 15px; margin: 22px 0 10px; }
+  .pieces { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+  .piece { border: 1px solid var(--bord); border-radius: 6px; padding: 12px 14px; }
+  .piece.Valide { border-color: var(--vert); background: #f3fff6; }
+  .piece.Partiel { border-color: #d69a00; background: #fffaf0; }
+  .piece.Non { border-color: var(--rouge); background: #fff5f5; }
+  .piece .titre { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+  .piece .titre b { font-size: 15px; } .piece .uc { color: var(--gris); font-size: 12px; }
+  .fichier { color: var(--gris); font-size: 13px; margin: 2px 0 8px; overflow-wrap: anywhere; }
+  .choix { display: flex; gap: 6px; flex-wrap: wrap; }
+  .choix button.sel-Valide { background: var(--vert); border-color: var(--vert); color: #fff; }
+  .choix button.sel-Partiel { background: #d69a00; border-color: #d69a00; color: #fff; }
+  .choix button.sel-Non { background: var(--rouge); border-color: var(--rouge); color: #fff; }
+  textarea { width: 100%; font: inherit; padding: 7px 9px; border: 1px solid var(--bord); border-radius: 4px; margin-top: 8px; resize: vertical; }
+  textarea.manque { border-color: var(--rouge); box-shadow: 0 0 0 1px var(--rouge); }
+  .aide { font-size: 12px; color: var(--gris); margin-top: 4px; }
+  .aide.erreur { color: var(--rouge); }
+  .note { font-size: 12px; background: var(--jaune-clair); padding: 4px 8px; border-radius: 4px; margin-top: 8px; }
+  .barre { display: flex; gap: 10px; align-items: center; margin-top: 14px; flex-wrap: wrap; }
+  .correction { margin-top: 8px; border: 1px solid var(--rouge); border-radius: 6px; padding: 12px 14px; background: #fffafa; }
+  .regle { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0; }
+  .regle small { color: var(--gris); }
+  .regle.indispo { color: var(--gris); }
+  #message { min-height: 180px; }
+  .toast { position: fixed; bottom: 16px; right: 16px; background: var(--texte); color: #fff; padding: 8px 14px; border-radius: 4px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.on { opacity: 1; }
+  .deja { font-size: 13px; color: var(--vert); margin-top: 6px; }
+  .demo { background: var(--jaune-clair); padding: 4px 10px; font-size: 12px; text-align: center; }
+</style>
+</head>
+<body>
+<div id="demo" class="demo" hidden>Mode démonstration hors Grist — données fictives</div>
+<div class="app">
+  <aside>
+    <header>
+      <h1>Validation des pièces</h1>
+      <input id="recherche" type="search" placeholder="N° de dossier, nom…">
+      <div class="filtres">
+        <button id="f-controler" class="plein">À contrôler</button>
+        <button id="f-tous">Tous</button>
+      </div>
+    </header>
+    <div id="liste" class="liste"></div>
+  </aside>
+  <main id="detail"><div class="vide">Chargement…</div></main>
+</div>
+<div id="toast" class="toast"></div>
+
+<script>
+const DEMARCHE = new URLSearchParams(location.search).get('demarche') || '';
+const T = {
+  dossiers: `Demarche_${DEMARCHE}_dossiers`,
+  champs: `Demarche_${DEMARCHE}_champs`,
+  zrr: `Demarche_${DEMARCHE}_repetable_zrr_concernee_s`,
+  regles: 'Regles_erreur',
+  journal: 'Journal',
+};
+// Les 4 pièces contrôlées. `col` = champ pièce jointe dans la table champs.
+const PIECES = [
+  { cle: 'identite', libelle: "Pièce d'identité", col: 'justificatif_d_identite', partielle: true, regle: 'Identité' },
+  { cle: 'cv', libelle: 'CV', col: 'cv_du_beneficiaire', nature: true, regle: 'CV' },
+  { cle: 'mission', libelle: 'Descriptif de la mission', col: 'descriptif_detaille_de_la_mission', nature: true, regle: 'Mission' },
+  { cle: 'financement', libelle: 'Documents de financement', col: 'les_documents_relatifs_au_financement', regle: 'Financement' },
+];
+const LIBELLE_STATUT = { 'Valide': 'Valide', 'Partiel': 'Validation partielle', 'Non valide': 'Non valide' };
+
+let data = { dossiers: [], champs: {}, zrr: {}, regles: [] };
+let selection = null;      // id de ligne du dossier affiché
+let brouillon = {};        // saisies en cours : { identite: {statut, commentaire}, … }
+let filtre = 'controler';
+let correction = { ids: [], message: '' };  // règles cochées + message en cours
+
+// --- Accès Grist (ou démo hors Grist) -------------------------------------------------------
+const horsGrist = window.self === window.top;
+
+function lignes(table) {  // format colonnes Grist → liste d'objets
+  const ids = table.id || [];
+  return ids.map((id, i) => { const o = { id }; for (const k in table) o[k] = table[k][i]; return o; });
+}
+async function lire(nom, optionnelle) {
+  try { return lignes(await grist.docApi.fetchTable(nom)); }
+  catch (e) { if (optionnelle) return []; throw e; }
+}
+async function charger() {
+  if (horsGrist) { data = demo(); return; }
+  const [dossiers, champs, zrr, regles] = await Promise.all([
+    lire(T.dossiers), lire(T.champs), lire(T.zrr, true), lire(T.regles, true)]);
+  data = {
+    dossiers,
+    champs: Object.fromEntries(champs.map(c => [String(c.dossier_number), c])),
+    zrr: zrr.reduce((acc, z) => ((acc[String(z.dossier_number)] ||= []).push(z.numero_de_la_zrr), acc), {}),
+    regles: regles.sort((a, b) => (a.Numero || 0) - (b.Numero || 0)),
+  };
+}
+async function ecrire(actions) {
+  if (horsGrist) { console.log('[démo] actions non envoyées', actions); return; }
+  await grist.docApi.applyUserActions(actions);
+}
+
+// --- Outils ----------------------------------------------------------------------------------
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const dateFr = v => { if (v == null || v === '') return '—'; const d = typeof v === 'number' ? new Date(v * 1000) : new Date(v);
+  return isNaN(d) ? String(v) : d.toLocaleDateString('fr-FR', { timeZone: 'UTC' }); };
+const aujourdhui = () => { const d = new Date(); return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 1000; };
+const lienUrl = v => (v || '').split(' ').pop();
+const statutDe = (d, p) => d[`PJ_${p.cle}_statut`] || '';
+const classe = s => s === 'Non valide' ? 'Non' : s;
+const aControler = d => PIECES.some(p => !statutDe(d, p));
+function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('on'); setTimeout(() => t.classList.remove('on'), 2200); }
+function identite(d) {
+  const c = data.champs[String(d.dossier_number)] || {};
+  const nom = [c.nom_de_naissance_du_beneficiaire, c.nom_d_usage_du_beneficiaire && c.nom_d_usage_du_beneficiaire !== c.nom_de_naissance_du_beneficiaire ? `(${c.nom_d_usage_du_beneficiaire})` : '']
+    .filter(Boolean).join(' ');
+  return { c, nom: [c.prenom_s_du_beneficiaire, nom].filter(Boolean).join(' ') || '(sans nom)' };
+}
+
+// --- Liste -----------------------------------------------------------------------------------
+function rendreListe() {
+  const q = document.getElementById('recherche').value.trim().toLowerCase();
+  const items = data.dossiers
+    .filter(d => filtre === 'tous' || aControler(d))
+    .filter(d => !q || `${d.dossier_number} ${identite(d).nom}`.toLowerCase().includes(q))
+    .sort((a, b) => (a.Jours_restants ?? 1e9) - (b.Jours_restants ?? 1e9));
+  document.getElementById('liste').innerHTML = items.length ? items.map(d => {
+    const jr = d.Jours_restants;
+    return `<div class="item ${d.id === selection ? 'actif' : ''}" data-id="${d.id}">
+      <div class="nom">${esc(identite(d).nom)}</div>
+      <div class="meta"><span>n° ${esc(d.dossier_number)}</span>
+        <span class="badge ${jr != null && jr < 15 ? 'alerte' : ''}">${jr == null ? '—' : jr + ' j restants'}</span></div>
+      <div class="pastilles">${PIECES.map(p => `<span class="pastille ${classe(statutDe(d, p))}" title="${esc(p.libelle)} : ${esc(LIBELLE_STATUT[statutDe(d, p)] || 'à contrôler')}"></span>`).join('')}</div>
+    </div>`;
+  }).join('') : `<div class="vide">${filtre === 'controler' ? 'Aucun dossier à contrôler.' : 'Aucun dossier.'}</div>`;
+}
+
+// --- Détail ----------------------------------------------------------------------------------
+function ouvrir(id) {
+  selection = id;
+  const d = data.dossiers.find(x => x.id === id);
+  brouillon = Object.fromEntries(PIECES.map(p => [p.cle, { statut: statutDe(d, p), commentaire: d[`PJ_${p.cle}_commentaire`] || '' }]));
+  correction = { ids: [], message: '' };
+  rendreListe(); rendreDetail();
+}
+function manques() {  // commentaires obligatoires
+  return PIECES.filter(p => {
+    const b = brouillon[p.cle]; if (b.commentaire.trim()) return false;
+    return b.statut === 'Partiel' || (b.statut === 'Non valide' && p.nature);
+  }).map(p => p.cle);
+}
+function rendreDetail() {
+  const el = document.getElementById('detail');
+  const d = data.dossiers.find(x => x.id === selection);
+  if (!d) { el.innerHTML = '<div class="vide">Sélectionnez un dossier dans la liste.</div>'; return; }
+  const { c, nom } = identite(d);
+  const zrr = data.zrr[String(d.dossier_number)] || [];
+  const jr = d.Jours_restants;
+  const manque = manques();
+  const nonValides = PIECES.filter(p => brouillon[p.cle].statut === 'Non valide');
+  const modifie = PIECES.some(p => brouillon[p.cle].statut !== statutDe(d, p) || brouillon[p.cle].commentaire !== (d[`PJ_${p.cle}_commentaire`] || ''));
+
+  el.innerHTML = `
+    <div class="entete">
+      <div><h2>${esc(nom)}</h2>
+        <div class="sous">Dossier n° ${esc(d.dossier_number)} · état DN : ${esc(d.state || '—')} · déposé le ${dateFr(d.Depot_dt ?? d.date_depot)}
+          · <span class="badge ${jr != null && jr < 15 ? 'alerte' : ''}">${jr == null ? '—' : jr + ' jours restants'}</span></div></div>
+      <div class="liens">
+        ${d.Lien_pieces_DN ? `<a class="bouton plein" target="_blank" rel="noopener" href="${esc(lienUrl(d.Lien_pieces_DN))}">Ouvrir les pièces dans DN</a>` : ''}
+        ${d.Lien_dossier_DN ? `<a class="bouton" target="_blank" rel="noopener" href="${esc(lienUrl(d.Lien_dossier_DN))}">Dossier complet</a>` : ''}
+      </div>
+    </div>
+    <dl class="grille">
+      <div><dt>Né(e) le</dt><dd>${dateFr(c.date_de_naissance_du_beneficiaire)} à ${esc(c.ville_de_naissance_du_beneficiaire || '—')} (${esc(c.pays_de_naissance_du_beneficiaire || '—')})</dd></div>
+      <div><dt>Nationalité</dt><dd>${esc(c.nationalite_du_beneficiaire || '—')}${c.autre_nationalite_du_beneficiaire && !/^Sans autre/.test(c.autre_nationalite_du_beneficiaire) ? ' + ' + esc(c.autre_nationalite_du_beneficiaire) : ''}</dd></div>
+      <div><dt>Type de pièce d'identité</dt><dd>${esc(c.quel_est_le_type_de_piece_d_identite_du_beneficiaire || '—')}</dd></div>
+      <div><dt>Établissement</dt><dd>${esc(c.quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr || '—')}</dd></div>
+      <div><dt>ZRR demandée(s)</dt><dd>${zrr.length ? zrr.map(esc).join(', ') : '—'}</dd></div>
+      <div><dt>Mission</dt><dd>${esc(c.intitule_du_poste || '—')} · du ${dateFr(c.date_de_debut_de_la_mission_dans_la_zrr)} au ${dateFr(c.date_de_fin_de_la_mission_dans_la_zrr)}</dd></div>
+    </dl>
+    ${c.resume_de_la_mission_et_de_l_activite_sujet_theme_prevue_au_sein_de_la_zrr ? `<div class="resume">${esc(c.resume_de_la_mission_et_de_l_activite_sujet_theme_prevue_au_sein_de_la_zrr)}</div>` : ''}
+
+    <h3>Contrôle des pièces</h3>
+    <div class="pieces">${PIECES.map(p => {
+      const b = brouillon[p.cle];
+      const options = ['Valide', ...(p.partielle ? ['Partiel'] : []), 'Non valide'];
+      const oblig = b.statut === 'Partiel' ? 'Commentaire obligatoire : nature de la correction apportée.'
+        : (b.statut === 'Non valide' && p.nature) ? "Commentaire obligatoire : nature de l'erreur constatée (incohérence de dates, « trous »…)." : '';
+      return `<div class="piece ${classe(b.statut)}">
+        <div class="titre"><b>${esc(p.libelle)}</b></div>
+        <div class="fichier">${c[p.col] ? '📎 ' + esc(c[p.col]) : 'Aucun fichier déposé'}</div>
+        <div class="choix">${options.map(s => `<button data-piece="${p.cle}" data-statut="${s}" class="${b.statut === s ? 'sel-' + classe(s) : ''}">${LIBELLE_STATUT[s]}</button>`).join('')}</div>
+        ${b.statut && b.statut !== 'Valide' || b.commentaire ? `<textarea rows="2" data-com="${p.cle}" class="${manque.includes(p.cle) ? 'manque' : ''}" placeholder="Commentaire">${esc(b.commentaire)}</textarea>
+          ${oblig ? `<div class="aide ${manque.includes(p.cle) ? 'erreur' : ''}">${oblig}</div>` : ''}` : ''}
+        ${p.note ? `<div class="note">${esc(p.note)}</div>` : ''}
+      </div>`; }).join('')}
+    </div>
+    <div class="barre">
+      <button id="enregistrer" class="plein" ${!modifie || manque.length ? 'disabled' : ''}>Enregistrer le contrôle</button>
+      <span class="aide">${manque.length ? 'Complétez les commentaires obligatoires.' : modifie ? 'Modifications non enregistrées.' : PIECES.some(p => statutDe(d, p)) ? 'Contrôle enregistré.' : 'Aucune pièce contrôlée.'}</span>
+    </div>
+    ${nonValides.length ? rendreCorrection(d, nonValides) : ''}`;
+}
+function rendreCorrection(d, nonValides) {
+  const pieces = new Set(nonValides.map(p => p.regle));
+  const utiles = data.regles.filter(r => pieces.has(r.Piece) || r.Piece === 'Toute pièce' || r.Piece === 'Formulaire');
+  const dejaEnvoye = d.Message_correction_date;
+  return `<h3>Demande de nouvelle pièce</h3>
+    <div class="correction">
+      <div class="aide">Pièce(s) non valide(s) : ${nonValides.map(p => esc(p.libelle)).join(', ')}. Cochez les règles d'erreur applicables : le message se pré-remplit.
+        Il est à <b>copier puis envoyer depuis la messagerie du dossier dans DN</b> — rien n'est envoyé automatiquement.</div>
+      ${dejaEnvoye ? `<div class="deja">Un message a déjà été marqué envoyé le ${dateFr(dejaEnvoye)}.</div>` : ''}
+      <div style="margin:10px 0">${utiles.length ? utiles.map(r => r.Message
+        ? `<label class="regle"><input type="checkbox" data-regle="${r.id}" ${correction.ids.includes(r.id) ? 'checked' : ''}> <span>${esc(r.Libelle)} <small>(${esc(r.Piece)})</small></span></label>`
+        : `<div class="regle indispo">— ${esc(r.Libelle)} <small>: pas de message défini</small></div>`).join('')
+        : '<div class="aide erreur">Table Regles_erreur introuvable ou vide.</div>'}</div>
+      <textarea id="message" placeholder="Le message apparaît ici quand vous cochez une règle. Vous pouvez l'adapter.">${esc(correction.message)}</textarea>
+      ${nonValides.filter(p => brouillon[p.cle].commentaire.trim()).map(p => `<div class="aide">Nature de l'erreur (${esc(p.libelle)}) : ${esc(brouillon[p.cle].commentaire)}</div>`).join('')}
+      <div class="barre">
+        <button id="copier">Copier le message</button>
+        ${d.Lien_dossier_DN ? `<a class="bouton" target="_blank" rel="noopener" href="${esc(lienUrl(d.Lien_dossier_DN))}">Ouvrir le dossier DN (onglet Messagerie)</a>` : ''}
+        <button id="envoye" class="plein">Marquer comme envoyé</button>
+      </div>
+    </div>`;
+}
+function composerMessage() {
+  correction.ids = [...document.querySelectorAll('[data-regle]:checked')].map(x => Number(x.dataset.regle));
+  correction.message = data.regles.filter(r => correction.ids.includes(r.id)).map(r => r.Message).join('\n\n— — —\n\n');
+  document.getElementById('message').value = correction.message;
+}
+
+// --- Écritures -------------------------------------------------------------------------------
+async function enregistrer() {
+  const d = data.dossiers.find(x => x.id === selection);
+  const champs = {};
+  for (const p of PIECES) { champs[`PJ_${p.cle}_statut`] = brouillon[p.cle].statut || null; champs[`PJ_${p.cle}_commentaire`] = brouillon[p.cle].commentaire; }
+  const detail = PIECES.map(p => `${p.libelle} : ${LIBELLE_STATUT[brouillon[p.cle].statut] || 'non contrôlée'}`).join(' ; ');
+  await ecrire([
+    ['UpdateRecord', T.dossiers, d.id, champs],
+    ['AddRecord', T.journal, null, { Horodatage: Date.now() / 1000, Utilisateur: 'Widget validation des pièces', Action: 'VALIDATION_PIECES', Dossier: String(d.dossier_number), Detail: detail }],
+  ]);
+  Object.assign(d, champs);
+  toast('Contrôle enregistré'); rendreListe(); rendreDetail();
+}
+async function marquerEnvoye() {
+  const d = data.dossiers.find(x => x.id === selection);
+  const message = document.getElementById('message').value.trim();
+  if (!message) { toast("Cochez au moins une règle (ou rédigez le message)"); return; }
+  const ids = correction.ids;
+  const champs = { Regles_erreur_appliquees: ['L', ...ids], Message_correction: message, Message_correction_date: aujourdhui() };
+  await ecrire([
+    ['UpdateRecord', T.dossiers, d.id, champs],
+    ['AddRecord', T.journal, null, { Horodatage: Date.now() / 1000, Utilisateur: 'Widget validation des pièces', Action: 'MESSAGE_CORRECTION',
+      Dossier: String(d.dossier_number), Detail: data.regles.filter(r => ids.includes(r.id)).map(r => `Règle ${r.Numero}`).join(', ') || 'Message libre' }],
+  ]);
+  Object.assign(d, champs);
+  toast('Message marqué comme envoyé'); rendreDetail();
+}
+
+// --- Événements ------------------------------------------------------------------------------
+document.getElementById('liste').addEventListener('click', e => { const it = e.target.closest('.item'); if (it) ouvrir(Number(it.dataset.id)); });
+document.getElementById('recherche').addEventListener('input', rendreListe);
+for (const [id, f] of [['f-controler', 'controler'], ['f-tous', 'tous']]) document.getElementById(id).addEventListener('click', () => {
+  filtre = f; document.getElementById('f-controler').classList.toggle('plein', f === 'controler'); document.getElementById('f-tous').classList.toggle('plein', f === 'tous'); rendreListe(); });
+const detail = document.getElementById('detail');
+detail.addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.piece) { const cur = brouillon[b.dataset.piece]; cur.statut = cur.statut === b.dataset.statut ? '' : b.dataset.statut; rendreDetail(); }
+  else if (b.id === 'enregistrer') enregistrer().catch(err => toast('Erreur : ' + err.message));
+  else if (b.id === 'copier') { navigator.clipboard.writeText(document.getElementById('message').value).then(() => toast('Message copié')); }
+  else if (b.id === 'envoye') marquerEnvoye().catch(err => toast('Erreur : ' + err.message));
+});
+detail.addEventListener('input', e => {
+  if (e.target.id === 'message') { correction.message = e.target.value; return; }
+  if (e.target.dataset.com) { brouillon[e.target.dataset.com].commentaire = e.target.value;
+    const pos = e.target.selectionStart, cle = e.target.dataset.com; rendreDetail();
+    const t = detail.querySelector(`[data-com="${cle}"]`); t.focus(); t.setSelectionRange(pos, pos); }
+});
+detail.addEventListener('change', e => { if (e.target.dataset.regle) composerMessage(); });
+
+async function demarrer() {
+  if (!DEMARCHE && !horsGrist) { detail.innerHTML = '<div class="vide">Ajoutez ?demarche=&lt;numéro&gt; à l\'URL du widget.</div>'; return; }
+  try { await charger(); } catch (e) { detail.innerHTML = `<div class="vide">Impossible de lire les tables de la démarche ${esc(DEMARCHE)} : ${esc(e.message)}</div>`; return; }
+  if (selection == null || !data.dossiers.some(d => d.id === selection)) {
+    const premier = data.dossiers.find(aControler) || data.dossiers[0]; if (premier) return ouvrir(premier.id);
+  }
+  rendreListe(); rendreDetail();
+}
+
+// --- Données de démonstration (hors Grist uniquement, entièrement fictives) -------------------
+function demo() {
+  const j = s => Date.UTC(...s.split('-').map((v, i) => i === 1 ? v - 1 : +v)) / 1000;
+  const url = n => `Ouvrir https://demarche.numerique.gouv.fr/procedures/${DEMARCHE || '0'}/dossiers/${n}`;
+  const dossiers = [
+    { id: 1, dossier_number: '90000001', state: 'en_construction', date_depot: '2026-09-28T10:00:00+02:00', Depot_dt: j('2026-09-28'), Jours_restants: 61 },
+    { id: 2, dossier_number: '90000002', state: 'en_instruction', date_depot: '2026-08-10T10:00:00+02:00', Depot_dt: j('2026-08-10'), Jours_restants: 12, PJ_identite_statut: 'Valide', PJ_cv_statut: 'Non valide', PJ_cv_commentaire: 'Période 2019-2022 absente' },
+  ].map(d => ({ ...d, Lien_dossier_DN: url(d.dossier_number), Lien_pieces_DN: url(d.dossier_number) + '/pieces_jointes' }));
+  const champs = {
+    '90000001': { prenom_s_du_beneficiaire: 'Tintin', nom_de_naissance_du_beneficiaire: 'RÉPORTER', date_de_naissance_du_beneficiaire: j('1999-01-10'), ville_de_naissance_du_beneficiaire: 'Klow', pays_de_naissance_du_beneficiaire: 'Syldavie', nationalite_du_beneficiaire: 'Syldavie', quel_est_le_type_de_piece_d_identite_du_beneficiaire: 'Passeport', quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr: 'Institut fictif du Belgistan', intitule_du_poste: 'Stagiaire', date_de_debut_de_la_mission_dans_la_zrr: j('2026-11-02'), resume_de_la_mission_et_de_l_activite_sujet_theme_prevue_au_sein_de_la_zrr: 'Mission fictive de démonstration.', justificatif_d_identite: 'passeport.pdf', cv_du_beneficiaire: 'cv.pdf', descriptif_detaille_de_la_mission: 'mission.docx', les_documents_relatifs_au_financement: 'financement.xlsx' },
+    '90000002': { prenom_s_du_beneficiaire: 'Bianca', nom_de_naissance_du_beneficiaire: 'CASTAFIORE', date_de_naissance_du_beneficiaire: j('1990-05-05'), pays_de_naissance_du_beneficiaire: 'San Theodoros', nationalite_du_beneficiaire: 'San Theodoros', quel_est_le_type_de_piece_d_identite_du_beneficiaire: "Carte d'identité", quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr: 'Laboratoire fictif n°1', justificatif_d_identite: 'cni.png', cv_du_beneficiaire: 'cv.pdf' },
+  };
+  const regles = [
+    { id: 1, Numero: 1, Libelle: "Justificatif d'identité non accepté", Piece: 'Identité', Message: 'Bonjour,\n[message 1 fictif]\nBien cordialement.' },
+    { id: 3, Numero: 3, Libelle: 'CV incomplet', Piece: 'CV', Message: 'Bonjour,\n[message 3 fictif]\nBien cordialement.' },
+    { id: 4, Numero: 4, Libelle: 'Document PDF sécurisé non accessible', Piece: 'Toute pièce', Message: 'Bonjour,\n[message 4 fictif]\nBien cordialement.' },
+    { id: 7, Numero: 7, Libelle: 'Date de début de mission antérieure à la date de la demande', Piece: 'Formulaire', Message: '' },
+  ];
+  return { dossiers, champs, zrr: { '90000001': ['23A1ZRR1', '75B12ZRR2'] }, regles };
+}
+
+if (horsGrist) { document.getElementById('demo').hidden = false; demarrer(); }
+else {
+  grist.ready({ requiredAccess: 'full' });
+  let premier = true;
+  grist.onRecords(() => { if (premier) { premier = false; demarrer(); } });  // table liée au widget
+  grist.onRecord(r => { if (r && r.id !== selection && data.dossiers.some(d => d.id === r.id)) ouvrir(r.id); });  // suit la sélection Grist
+  setTimeout(() => { if (premier) { premier = false; demarrer(); } }, 1500);  // si le widget n'est lié à aucune table
+}
+</script>
+</body>
+</html>
