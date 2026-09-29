@@ -66,6 +66,7 @@
   .regle { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0; }
   .regle small { color: var(--gris); }
   .regle.indispo { color: var(--gris); }
+  .motifs { margin-top: 8px; }
   #message { min-height: 180px; }
   .toast { position: fixed; bottom: 16px; right: 16px; background: var(--texte); color: #fff; padding: 8px 14px; border-radius: 4px; opacity: 0; transition: opacity .2s; pointer-events: none; }
   .toast.on { opacity: 1; }
@@ -98,6 +99,7 @@ const T = {
   champs: `Demarche_${DEMARCHE}_champs`,
   zrr: `Demarche_${DEMARCHE}_repetable_zrr_concernee_s`,
   regles: 'Regles_erreur',
+  motifs: 'Motifs_pieces',
   journal: 'Journal',
 };
 // Les 4 pièces contrôlées. `col` = champ pièce jointe dans la table champs.
@@ -109,7 +111,7 @@ const PIECES = [
 ];
 const LIBELLE_STATUT = { 'Valide': 'Valide', 'Partiel': 'Validation partielle', 'Non valide': 'Non valide' };
 
-let data = { dossiers: [], champs: {}, zrr: {}, regles: [] };
+let data = { dossiers: [], champs: {}, zrr: {}, regles: [], motifs: [] };
 let selection = null;      // id de ligne du dossier affiché
 let brouillon = {};        // saisies en cours : { identite: {statut, commentaire}, … }
 let filtre = 'controler';
@@ -129,13 +131,14 @@ async function lire(nom, optionnelle) {
 }
 async function charger() {
   if (horsGrist) { data = demo(); return; }
-  const [dossiers, champs, zrr, regles] = await Promise.all([
-    lire(T.dossiers), lire(T.champs), lire(T.zrr, true), lire(T.regles, true)]);
+  const [dossiers, champs, zrr, regles, motifs] = await Promise.all([
+    lire(T.dossiers), lire(T.champs), lire(T.zrr, true), lire(T.regles, true), lire(T.motifs, true)]);
   data = {
     dossiers,
     champs: Object.fromEntries(champs.map(c => [String(c.dossier_number), c])),
     zrr: zrr.reduce((acc, z) => ((acc[String(z.dossier_number)] ||= []).push(z.numero_de_la_zrr), acc), {}),
     regles: regles.sort((a, b) => (a.Numero || 0) - (b.Numero || 0)),
+    motifs: motifs.sort((a, b) => (a.Ordre || 0) - (b.Ordre || 0)),
   };
 }
 async function ecrire(actions) {
@@ -182,13 +185,18 @@ function rendreListe() {
 function ouvrir(id) {
   selection = id;
   const d = data.dossiers.find(x => x.id === id);
-  brouillon = Object.fromEntries(PIECES.map(p => [p.cle, { statut: statutDe(d, p), commentaire: d[`PJ_${p.cle}_commentaire`] || '' }]));
+  brouillon = Object.fromEntries(PIECES.map(p => [p.cle, { statut: statutDe(d, p), commentaire: d[`PJ_${p.cle}_commentaire`] || '', motifs: motifsDe(d, p) }]));
   correction = { ids: [], message: '' };
   rendreListe(); rendreDetail();
 }
-function manques() {  // commentaires obligatoires
+// Motifs proposés pour une pièce et un statut (table Motifs_pieces, éditable par le métier).
+const motifsPour = (p, statut) => data.motifs.filter(m => m.Statut === statut && (m.Piece === p.regle || m.Piece === 'Toute pièce'));
+const motifsDe = (d, p) => { const v = d[`PJ_${p.cle}_motifs`]; return Array.isArray(v) ? v.slice(1) : []; };  // RefList Grist = ['L', ids…]
+const memes = (a, b) => a.length === b.length && a.every(x => b.includes(x));
+const libellesMotifs = b => data.motifs.filter(m => b.motifs.includes(m.id)).map(m => m.Libelle);
+function manques() {  // motif ou précision obligatoire
   return PIECES.filter(p => {
-    const b = brouillon[p.cle]; if (b.commentaire.trim()) return false;
+    const b = brouillon[p.cle]; if (b.commentaire.trim() || b.motifs.length) return false;
     return b.statut === 'Partiel' || (b.statut === 'Non valide' && p.nature);
   }).map(p => p.cle);
 }
@@ -201,7 +209,8 @@ function rendreDetail() {
   const jr = d.Jours_restants;
   const manque = manques();
   const nonValides = PIECES.filter(p => brouillon[p.cle].statut === 'Non valide');
-  const modifie = PIECES.some(p => brouillon[p.cle].statut !== statutDe(d, p) || brouillon[p.cle].commentaire !== (d[`PJ_${p.cle}_commentaire`] || ''));
+  const modifie = PIECES.some(p => brouillon[p.cle].statut !== statutDe(d, p) || brouillon[p.cle].commentaire !== (d[`PJ_${p.cle}_commentaire`] || '')
+    || !memes(brouillon[p.cle].motifs, motifsDe(d, p)));
 
   el.innerHTML = `
     <div class="entete">
@@ -227,13 +236,15 @@ function rendreDetail() {
     <div class="pieces">${PIECES.map(p => {
       const b = brouillon[p.cle];
       const options = ['Valide', ...(p.partielle ? ['Partiel'] : []), 'Non valide'];
-      const oblig = b.statut === 'Partiel' ? 'Commentaire obligatoire : nature de la correction apportée.'
-        : (b.statut === 'Non valide' && p.nature) ? "Commentaire obligatoire : nature de l'erreur constatée (incohérence de dates, « trous »…)." : '';
+      const oblig = b.statut === 'Partiel' ? 'Obligatoire : cochez un motif ou précisez la correction apportée.'
+        : (b.statut === 'Non valide' && p.nature) ? "Obligatoire : cochez un motif ou précisez la nature de l'erreur." : '';
+      const proposes = b.statut && b.statut !== 'Valide' ? motifsPour(p, b.statut) : [];
       return `<div class="piece ${classe(b.statut)}">
         <div class="titre"><b>${esc(p.libelle)}</b></div>
         <div class="fichier">${c[p.col] ? '📎 ' + esc(c[p.col]) : 'Aucun fichier déposé'}</div>
         <div class="choix">${options.map(s => `<button data-piece="${p.cle}" data-statut="${s}" class="${b.statut === s ? 'sel-' + classe(s) : ''}">${LIBELLE_STATUT[s]}</button>`).join('')}</div>
-        ${b.statut && b.statut !== 'Valide' || b.commentaire ? `<textarea rows="2" data-com="${p.cle}" class="${manque.includes(p.cle) ? 'manque' : ''}" placeholder="Commentaire">${esc(b.commentaire)}</textarea>
+        ${proposes.length ? `<div class="motifs">${proposes.map(m => `<label class="regle"><input type="checkbox" data-motif="${m.id}" data-pour="${p.cle}" ${b.motifs.includes(m.id) ? 'checked' : ''}> <span>${esc(m.Libelle)}</span></label>`).join('')}</div>` : ''}
+        ${b.statut && b.statut !== 'Valide' || b.commentaire ? `<textarea rows="2" data-com="${p.cle}" class="${manque.includes(p.cle) ? 'manque' : ''}" placeholder="${proposes.length ? 'Autre motif / précision' : 'Motif / précision'}">${esc(b.commentaire)}</textarea>
           ${oblig ? `<div class="aide ${manque.includes(p.cle) ? 'erreur' : ''}">${oblig}</div>` : ''}` : ''}
         ${p.note ? `<div class="note">${esc(p.note)}</div>` : ''}
       </div>`; }).join('')}
@@ -258,7 +269,7 @@ function rendreCorrection(d, nonValides) {
         : `<div class="regle indispo">— ${esc(r.Libelle)} <small>: pas de message défini</small></div>`).join('')
         : '<div class="aide erreur">Table Regles_erreur introuvable ou vide.</div>'}</div>
       <textarea id="message" placeholder="Le message apparaît ici quand vous cochez une règle. Vous pouvez l'adapter.">${esc(correction.message)}</textarea>
-      ${nonValides.filter(p => brouillon[p.cle].commentaire.trim()).map(p => `<div class="aide">Nature de l'erreur (${esc(p.libelle)}) : ${esc(brouillon[p.cle].commentaire)}</div>`).join('')}
+      ${nonValides.filter(p => brouillon[p.cle].commentaire.trim() || brouillon[p.cle].motifs.length).map(p => `<div class="aide">Nature de l'erreur (${esc(p.libelle)}) : ${esc([...libellesMotifs(brouillon[p.cle]), brouillon[p.cle].commentaire.trim()].filter(Boolean).join(' ; '))}</div>`).join('')}
       <div class="barre">
         <button id="copier">Copier le message</button>
         ${d.Lien_dossier_DN ? `<a class="bouton" target="_blank" rel="noopener" href="${esc(lienUrl(d.Lien_dossier_DN))}">Ouvrir le dossier DN (onglet Messagerie)</a>` : ''}
@@ -276,8 +287,14 @@ function composerMessage() {
 async function enregistrer() {
   const d = data.dossiers.find(x => x.id === selection);
   const champs = {};
-  for (const p of PIECES) { champs[`PJ_${p.cle}_statut`] = brouillon[p.cle].statut || null; champs[`PJ_${p.cle}_commentaire`] = brouillon[p.cle].commentaire; }
-  const detail = PIECES.map(p => `${p.libelle} : ${LIBELLE_STATUT[brouillon[p.cle].statut] || 'non contrôlée'}`).join(' ; ');
+  const avecMotifs = data.motifs.length > 0;  // colonnes motifs présentes dans ce doc
+  for (const p of PIECES) {
+    const b = brouillon[p.cle];
+    champs[`PJ_${p.cle}_statut`] = b.statut || null; champs[`PJ_${p.cle}_commentaire`] = b.commentaire;
+    if (avecMotifs) champs[`PJ_${p.cle}_motifs`] = b.motifs.length ? ['L', ...b.motifs] : null;
+  }
+  const detail = PIECES.map(p => { const b = brouillon[p.cle]; const m = [...libellesMotifs(b), b.commentaire.trim()].filter(Boolean);
+    return `${p.libelle} : ${LIBELLE_STATUT[b.statut] || 'non contrôlée'}${m.length ? ' (' + m.join(' ; ') + ')' : ''}`; }).join(' ; ');
   await ecrire([
     ['UpdateRecord', T.dossiers, d.id, champs],
     ['AddRecord', T.journal, null, { Horodatage: Date.now() / 1000, Utilisateur: 'Widget validation des pièces', Action: 'VALIDATION_PIECES', Dossier: String(d.dossier_number), Detail: detail }],
@@ -308,7 +325,12 @@ for (const [id, f] of [['f-controler', 'controler'], ['f-tous', 'tous']]) docume
 const detail = document.getElementById('detail');
 detail.addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
-  if (b.dataset.piece) { const cur = brouillon[b.dataset.piece]; cur.statut = cur.statut === b.dataset.statut ? '' : b.dataset.statut; rendreDetail(); }
+  if (b.dataset.piece) {
+    const p = PIECES.find(x => x.cle === b.dataset.piece), cur = brouillon[p.cle];
+    cur.statut = cur.statut === b.dataset.statut ? '' : b.dataset.statut;
+    const valides = motifsPour(p, cur.statut).map(m => m.id); cur.motifs = cur.motifs.filter(id => valides.includes(id));  // motifs du nouveau statut seulement
+    rendreDetail();
+  }
   else if (b.id === 'enregistrer') verrou(enregistrer);
   else if (b.id === 'copier') { navigator.clipboard.writeText(document.getElementById('message').value).then(() => toast('Message copié')); }
   else if (b.id === 'envoye') verrou(marquerEnvoye);
@@ -319,7 +341,20 @@ detail.addEventListener('input', e => {
     const pos = e.target.selectionStart, cle = e.target.dataset.com; rendreDetail();
     const t = detail.querySelector(`[data-com="${cle}"]`); t.focus(); t.setSelectionRange(pos, pos); }
 });
-detail.addEventListener('change', e => { if (e.target.dataset.regle) composerMessage(); });
+detail.addEventListener('change', e => {
+  if (e.target.dataset.regle) composerMessage();
+  if (e.target.dataset.motif) {
+    const cur = brouillon[e.target.dataset.pour], id = Number(e.target.dataset.motif);
+    cur.motifs = e.target.checked ? [...cur.motifs, id] : cur.motifs.filter(x => x !== id);
+    // motif relié à une règle d'erreur → règle pré-cochée pour le message de correction
+    const m = data.motifs.find(x => x.id === id);
+    if (e.target.checked && cur.statut === 'Non valide' && m && m.Regle && !correction.ids.includes(m.Regle)) {
+      correction.ids = [...correction.ids, m.Regle];
+      correction.message = data.regles.filter(r => correction.ids.includes(r.id)).map(r => r.Message).join('\n\n— — —\n\n');
+    }
+    rendreDetail();
+  }
+});
 
 async function verrou(action) {  // une seule écriture à la fois
   if (enCours) return;
@@ -355,7 +390,12 @@ function demo() {
     { id: 4, Numero: 4, Libelle: 'Document PDF sécurisé non accessible', Piece: 'Toute pièce', Message: 'Bonjour,\n[message 4 fictif]\nBien cordialement.' },
     { id: 7, Numero: 7, Libelle: 'Date de début de mission antérieure à la date de la demande', Piece: 'Formulaire', Message: '' },
   ];
-  return { dossiers, champs, zrr: { '90000001': ['23A1ZRR1', '75B12ZRR2'] }, regles };
+  const motifs = [
+    { id: 1, Ordre: 1, Piece: 'Identité', Statut: 'Partiel', Libelle: '[motif partiel fictif]' },
+    { id: 2, Ordre: 2, Piece: 'CV', Statut: 'Non valide', Libelle: '[motif CV fictif]', Regle: 3 },
+    { id: 3, Ordre: 3, Piece: 'Toute pièce', Statut: 'Non valide', Libelle: '[motif commun fictif]', Regle: 4 },
+  ];
+  return { dossiers, champs, zrr: { '90000001': ['23A1ZRR1', '75B12ZRR2'] }, regles, motifs };
 }
 
 if (horsGrist) { document.getElementById('demo').hidden = false; demarrer(); }
