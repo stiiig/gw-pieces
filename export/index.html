@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Export</title>
+<!-- Widget Grist : export personnalisé (lignes × colonnes × format). Paramètre d'URL requis : ?demarche=<numéro>. Accès complet requis. -->
+<script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root { --bleu: #000091; --bleu-clair: #e3e3fd; --texte: #161616; --gris: #666; --bord: #ddd; --fond: #f6f6f6; --jaune-clair: #feecc2; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 Marianne, system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--texte); background: #fff; }
+  .app { display: grid; grid-template-columns: 290px 1fr; height: 100vh; }
+  aside { background: var(--fond); border-right: 1px solid var(--bord); display: flex; flex-direction: column; min-height: 0; }
+  aside header { padding: 14px; border-bottom: 1px solid var(--bord); }
+  h1 { font-size: 17px; margin: 0 0 10px; color: var(--bleu); }
+  aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--gris); margin: 12px 0 4px; }
+  .colonnes { overflow-y: auto; padding: 0 14px 14px; flex: 1; }
+  .colonnes label { display: flex; gap: 6px; align-items: flex-start; font-size: 13px; padding: 2px 0; }
+  input[type=search] { width: 100%; font: inherit; padding: 6px 8px; border: 1px solid var(--bord); border-radius: 4px; }
+  main { padding: 16px 20px 30px; overflow: auto; min-width: 0; }
+  .barre { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  button { font: inherit; border-radius: 4px; padding: 6px 12px; cursor: pointer; border: 1px solid var(--bleu); background: #fff; color: var(--bleu); }
+  button.plein { background: var(--bleu); color: #fff; }
+  button.petit { padding: 2px 8px; font-size: 12px; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  select { font: inherit; padding: 5px 7px; border: 1px solid var(--bord); border-radius: 4px; }
+  .aide { font-size: 12px; color: var(--gris); }
+  table { border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--bord); white-space: nowrap; max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+  th { background: var(--fond); color: var(--gris); font-weight: 600; position: sticky; top: 0; }
+  tr.off td { color: #aaa; }
+  .demo { background: var(--jaune-clair); padding: 4px 10px; font-size: 12px; text-align: center; }
+  .vide { color: var(--gris); padding: 40px; text-align: center; }
+  @media print { aside, .barre, .demo, td:first-child, th:first-child, tr.off { display: none !important; } .app { display: block; height: auto; } main { overflow: visible; }
+                 th, td { white-space: normal; max-width: none; } }
+</style>
+</head>
+<body>
+<div id="demo" class="demo" hidden>Mode démonstration hors Grist — données fictives</div>
+<div class="app">
+  <aside>
+    <header><h1>Export</h1><input id="cherche" type="search" placeholder="Chercher une colonne…">
+      <div style="margin-top:8px;display:flex;gap:6px"><button class="petit" id="toutes">Toutes</button><button class="petit" id="aucune">Aucune</button><button class="petit" id="usuelles">Usuelles</button></div></header>
+    <div class="colonnes" id="colonnes"></div>
+  </aside>
+  <main>
+    <div class="barre">
+      <label class="aide">Avis <select id="f-avis"></select></label>
+      <label class="aide">État <select id="f-etat"></select></label>
+      <span id="compte" class="aide"></span>
+      <span style="flex:1"></span>
+      <button id="csv" class="plein">CSV</button><button id="xlsx" class="plein">Excel</button><button id="imprimer">Imprimer / PDF</button>
+    </div>
+    <div id="table"><div class="vide">Chargement…</div></div>
+  </main>
+</div>
+<script>
+const DEMARCHE = new URLSearchParams(location.search).get('demarche') || '';
+const T = { dossiers: `Demarche_${DEMARCHE}_dossiers`, champs: `Demarche_${DEMARCHE}_champs`, journal: 'Journal' };
+const AVIS = { AF: 'Favorable', AF1: 'Favorable avec précautions', AR1: 'Réservé — niveau 1', AR2: 'Réservé — niveau 2', AR3: 'Réservé — niveau 3', AR4: 'Réservé — niveau 4', AD: 'Défavorable' };
+const TECHNIQUES = /^(id|manualSort|gristHelper_.*|champ_id|dossier_id|labels_json|dossiers_supprimes_DN|.*_id)$/;
+// Colonnes cochées par défaut (si présentes)
+const USUELLES = ['dossier_number', 'state', 'Depot_dt', 'prenom_s_du_beneficiaire', 'nom_de_naissance_du_beneficiaire', 'date_de_naissance_du_beneficiaire',
+  'nationalite_du_beneficiaire', 'quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr', 'Criblage_resultat', 'Avis_final', 'Avis_date', 'Jours_restants'];
+
+let lignesData = [], colonnes = [], actives = new Set(), exclues = new Set();
+const horsGrist = window.self === window.top;
+const lignes = t => (t.id || []).map((id, i) => { const o = { id }; for (const k in t) o[k] = t[k][i]; return o; });
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// Valeur lisible d'une cellule selon le type Grist de la colonne
+function valeur(col, v) {
+  if (v == null || v === '') return '';
+  if (col.type === 'Date') return new Date(v * 1000).toLocaleDateString('fr-FR', { timeZone: 'UTC' });
+  if (col.type.startsWith('DateTime')) return new Date(v * 1000).toLocaleString('fr-FR');
+  if (col.type === 'Bool') return v ? 'Oui' : 'Non';
+  if (Array.isArray(v)) return v[0] === 'L' ? v.slice(1).join(', ') : JSON.stringify(v);
+  if (col.id === 'Avis_final' || col.id === 'Proposition_instructeur') return AVIS[v] || v;
+  return String(v);
+}
+async function charger() {
+  if (horsGrist) return demo();
+  const [d, c, tables, cols] = await Promise.all([grist.docApi.fetchTable(T.dossiers), grist.docApi.fetchTable(T.champs),
+    grist.docApi.fetchTable('_grist_Tables'), grist.docApi.fetchTable('_grist_Tables_column')]);
+  const refTable = Object.fromEntries(lignes(tables).map(t => [t.tableId, t.id]));
+  const meta = lignes(cols);
+  const desc = (tableId, groupe) => meta.filter(m => m.parentId === refTable[tableId] && !TECHNIQUES.test(m.colId))
+    .map(m => ({ id: m.colId, label: m.label || m.colId, type: m.type || 'Any', groupe }));
+  const champs = Object.fromEntries(lignes(c).map(x => [String(x.dossier_number), x]));
+  const vuD = new Set();
+  colonnes = [...desc(T.dossiers, 'Dossier'), ...desc(T.champs, 'Formulaire').filter(x => x.id !== 'dossier_number')]
+    .filter(x => !vuD.has(x.id) && vuD.add(x.id));
+  lignesData = lignes(d).map(x => ({ ...champs[String(x.dossier_number)], ...x }));
+}
+
+function rendreColonnes() {
+  const q = document.getElementById('cherche').value.trim().toLowerCase();
+  let groupe = '';
+  document.getElementById('colonnes').innerHTML = colonnes.filter(c => !q || c.label.toLowerCase().includes(q)).map(c => {
+    const t = c.groupe !== groupe ? `<h2>${c.groupe}</h2>` : ''; groupe = c.groupe;
+    return `${t}<label><input type="checkbox" data-col="${esc(c.id)}" ${actives.has(c.id) ? 'checked' : ''}> ${esc(c.label)}</label>`; }).join('');
+}
+function remplirFiltres() {
+  document.getElementById('f-avis').innerHTML = '<option value="">Tous</option><option value="-">Sans avis</option>' + Object.entries(AVIS).map(([k, l]) => `<option value="${k}">${l}</option>`).join('');
+  document.getElementById('f-etat').innerHTML = '<option value="">Tous</option>' + [...new Set(lignesData.map(l => l.Etat_interne || l.state).filter(Boolean))].sort().map(e => `<option>${esc(e)}</option>`).join('');
+}
+function visibles() {
+  const av = document.getElementById('f-avis').value, et = document.getElementById('f-etat').value;
+  return lignesData.filter(l => (!av || (av === '-' ? !l.Avis_final : l.Avis_final === av)) && (!et || (l.Etat_interne || l.state) === et));
+}
+const colsActives = () => colonnes.filter(c => actives.has(c.id));
+function rendreTable() {
+  const ls = visibles(), cs = colsActives(), n = ls.filter(l => !exclues.has(l.id)).length;
+  document.getElementById('compte').textContent = `${n} ligne(s) · ${cs.length} colonne(s)`;
+  ['csv', 'xlsx', 'imprimer'].forEach(id => document.getElementById(id).disabled = !n || !cs.length);
+  document.getElementById('table').innerHTML = !cs.length ? '<div class="vide">Cochez au moins une colonne.</div>' : `<table>
+    <thead><tr><th><input type="checkbox" id="tout" ${ls.every(l => !exclues.has(l.id)) ? 'checked' : ''}></th>${cs.map(c => `<th>${esc(c.label)}</th>`).join('')}</tr></thead>
+    <tbody>${ls.map(l => `<tr class="${exclues.has(l.id) ? 'off' : ''}"><td><input type="checkbox" data-ligne="${l.id}" ${exclues.has(l.id) ? '' : 'checked'}></td>
+      ${cs.map(c => `<td title="${esc(valeur(c, l[c.id]))}">${esc(valeur(c, l[c.id]))}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+}
+function donnees() {
+  const cs = colsActives();
+  return [cs.map(c => c.label), ...visibles().filter(l => !exclues.has(l.id)).map(l => cs.map(c => valeur(c, l[c.id])))];
+}
+function nomFichier(ext) { const d = new Date(), p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}_${p(d.getMonth() + 1)}_${p(d.getDate())}_Exports_Personnalisé.${ext}`; }
+function telecharger(nom, blob) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = nom; a.click(); }
+async function tracer(format, nb) {
+  if (horsGrist) return;
+  await grist.docApi.applyUserActions([['AddRecord', T.journal, null, { Horodatage: Date.now() / 1000, Utilisateur: 'Widget export', Action: 'EXPORT_PERSONNALISE',
+    Dossier: '', Detail: `${format} : ${nb} ligne(s), colonnes : ${colsActives().map(c => c.label).join(', ')}` }]]);
+}
+async function exporter(format) {
+  const t = donnees();
+  if (format === 'csv') {
+    const cell = v => /[;"\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+    telecharger(nomFichier('csv'), new Blob(['﻿' + t.map(l => l.map(cell).join(';')).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
+  } else if (format === 'xlsx') {
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(t), 'Export'); XLSX.writeFile(wb, nomFichier('xlsx'));
+  } else window.print();
+  await tracer(format === 'imprimer' ? 'Impression / PDF' : format.toUpperCase(), t.length - 1);
+}
+
+document.body.addEventListener('change', e => {
+  const x = e.target;
+  if (x.dataset.col) { x.checked ? actives.add(x.dataset.col) : actives.delete(x.dataset.col); rendreTable(); }
+  else if (x.dataset.ligne) { const id = Number(x.dataset.ligne); x.checked ? exclues.delete(id) : exclues.add(id); rendreTable(); }
+  else if (x.id === 'tout') { visibles().forEach(l => x.checked ? exclues.delete(l.id) : exclues.add(l.id)); rendreTable(); }
+  else if (x.id === 'f-avis' || x.id === 'f-etat') rendreTable();
+});
+document.getElementById('cherche').addEventListener('input', rendreColonnes);
+document.getElementById('toutes').onclick = () => { colonnes.forEach(c => actives.add(c.id)); rendreColonnes(); rendreTable(); };
+document.getElementById('aucune').onclick = () => { actives.clear(); rendreColonnes(); rendreTable(); };
+document.getElementById('usuelles').onclick = () => { actives = new Set(USUELLES.filter(id => colonnes.some(c => c.id === id))); rendreColonnes(); rendreTable(); };
+['csv', 'xlsx', 'imprimer'].forEach(f => document.getElementById(f).onclick = () => exporter(f).catch(e => alert('Erreur : ' + e.message)));
+
+async function demarrer() {
+  if (!DEMARCHE && !horsGrist) { document.getElementById('table').innerHTML = '<div class="vide">Ajoutez ?demarche=&lt;numéro&gt; à l\'URL du widget.</div>'; return; }
+  try { await charger(); } catch (e) { document.getElementById('table').innerHTML = `<div class="vide">Impossible de lire les tables : ${esc(e.message)}</div>`; return; }
+  actives = new Set(USUELLES.filter(id => colonnes.some(c => c.id === id)));
+  remplirFiltres(); rendreColonnes(); rendreTable();
+}
+function demo() {  // entièrement fictif
+  colonnes = [{ id: 'dossier_number', label: 'N° dossier', type: 'Text', groupe: 'Dossier' }, { id: 'Avis_final', label: 'Avis final', type: 'Choice', groupe: 'Dossier' },
+    { id: 'Avis_date', label: "Date de l'avis", type: 'Date', groupe: 'Dossier' }, { id: 'nom_de_naissance_du_beneficiaire', label: 'Nom', type: 'Text', groupe: 'Formulaire' },
+    { id: 'nationalite_du_beneficiaire', label: 'Nationalité', type: 'Text', groupe: 'Formulaire' }];
+  lignesData = ['RÉPORTER', 'TOURNESOL', 'CASTAFIORE'].map((n, i) => ({ id: i + 1, dossier_number: String(90000001 + i), Avis_final: ['AF', 'AR1', ''][i],
+    Avis_date: i < 2 ? Date.UTC(2026, 8, 10 + i) / 1000 : null, nom_de_naissance_du_beneficiaire: n, nationalite_du_beneficiaire: 'Syldavie' }));
+}
+if (horsGrist) { document.getElementById('demo').hidden = false; demarrer(); }
+else { grist.ready({ requiredAccess: 'full' }); let p = true; grist.onRecords(() => { if (p) { p = false; demarrer(); } }); setTimeout(() => { if (p) { p = false; demarrer(); } }, 1500); }
+</script>
+</body>
+</html>

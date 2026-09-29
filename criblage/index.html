@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Criblage</title>
+<!-- Widget Grist : constitution des lots de criblage (export CSV) et saisie des retours. Paramètre d'URL requis : ?demarche=<numéro>. Accès complet requis. -->
+<script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
+<style>
+  :root { --bleu: #000091; --bleu-clair: #e3e3fd; --texte: #161616; --gris: #666; --bord: #ddd; --fond: #f6f6f6;
+          --vert: #18753c; --orange: #b34000; --orange-clair: #ffe9e6; --jaune-clair: #feecc2; --rouge: #ce0500; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 Marianne, system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--texte); background: #fff; }
+  header { padding: 14px 22px 0; border-bottom: 1px solid var(--bord); background: var(--fond); }
+  h1 { font-size: 18px; margin: 0 0 10px; color: var(--bleu); }
+  .onglets { display: flex; gap: 4px; }
+  .onglets button { border-radius: 6px 6px 0 0; border-bottom: none; }
+  .onglets .n { margin-left: 6px; font-weight: 700; }
+  main { padding: 18px 22px 40px; }
+  a.bouton, button { font: inherit; border-radius: 4px; padding: 6px 12px; cursor: pointer; border: 1px solid var(--bleu); background: #fff; color: var(--bleu); }
+  button.plein { background: var(--bleu); color: #fff; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--bord); vertical-align: middle; }
+  th { font-size: 12px; color: var(--gris); font-weight: 600; background: var(--fond); }
+  tr.sel td { background: var(--bleu-clair); }
+  .barre { display: flex; gap: 12px; align-items: center; margin: 0 0 12px; flex-wrap: wrap; }
+  .compteur { font-weight: 700; font-size: 16px; }
+  .compteur.plein { color: var(--orange); }
+  .aide { font-size: 12px; color: var(--gris); }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; background: var(--bleu-clair); color: var(--bleu); white-space: nowrap; }
+  .badge.alerte { background: var(--orange-clair); color: var(--orange); }
+  .lot { border: 1px solid var(--bord); border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
+  .lot > .tete { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; background: var(--fond); flex-wrap: wrap; }
+  .lot > .tete b { font-size: 15px; }
+  .res button { padding: 3px 10px; font-size: 13px; }
+  .res button.Inconnu.sel { background: var(--vert); border-color: var(--vert); color: #fff; }
+  .res button.Différé.sel { background: #d69a00; border-color: #d69a00; color: #fff; }
+  .res button.Connu.sel { background: var(--rouge); border-color: var(--rouge); color: #fff; }
+  .vide { color: var(--gris); padding: 40px; text-align: center; }
+  .toast { position: fixed; bottom: 16px; right: 16px; background: var(--texte); color: #fff; padding: 8px 14px; border-radius: 4px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.on { opacity: 1; }
+  .demo { background: var(--jaune-clair); padding: 4px 10px; font-size: 12px; text-align: center; }
+</style>
+</head>
+<body>
+<div id="demo" class="demo" hidden>Mode démonstration hors Grist — données fictives</div>
+<header><h1>Criblage</h1><div id="onglets" class="onglets"></div></header>
+<main id="contenu"><div class="vide">Chargement…</div></main>
+<div id="toast" class="toast"></div>
+<script>
+const DEMARCHE = new URLSearchParams(location.search).get('demarche') || '';
+const T = { dossiers: `Demarche_${DEMARCHE}_dossiers`, champs: `Demarche_${DEMARCHE}_champs`, journal: 'Journal' };
+const MAX_LOT = 40;          // limite du logiciel de chiffrement
+const RELANCE_JOURS = 30;    // délai de réponse des services interrogés
+const RESULTATS = ['Inconnu', 'Différé', 'Connu'];
+// Champs du fichier d'export (dans l'ordre) : [en-tête, fonction de lecture]
+const COLONNES_CSV = [
+  ['N° dossier', (d, c) => d.dossier_number], ['Nom', (d, c) => c.nom_de_naissance_du_beneficiaire],
+  ['Prénom', (d, c) => c.prenom_s_du_beneficiaire], ['Date de naissance', (d, c) => dateFr(c.date_de_naissance_du_beneficiaire)],
+  ['Lieu de naissance', (d, c) => c.ville_de_naissance_du_beneficiaire], ['Pays de naissance', (d, c) => c.pays_de_naissance_du_beneficiaire],
+  ['Nationalité', (d, c) => c.nationalite_du_beneficiaire],
+];
+const ONGLETS = [['envoyer', 'À cribler'], ['cours', 'Lots en cours'], ['differes', 'Différés'], ['faits', 'Criblés']];
+
+let data = { dossiers: [], champs: {} }, onglet = 'envoyer', choisis = new Set(), enCours = false, saisies = {};
+const horsGrist = window.self === window.top;
+const lignes = t => (t.id || []).map((id, i) => { const o = { id }; for (const k in t) o[k] = t[k][i]; return o; });
+async function charger() {
+  if (horsGrist) { data = demo(); return; }
+  const [d, c] = await Promise.all([grist.docApi.fetchTable(T.dossiers), grist.docApi.fetchTable(T.champs)]);
+  data = { dossiers: lignes(d), champs: Object.fromEntries(lignes(c).map(x => [String(x.dossier_number), x])) };
+}
+async function ecrire(actions) { if (horsGrist) { console.log('[démo]', actions); return; } await grist.docApi.applyUserActions(actions); }
+const journal = (action, detail, dossier) => ['AddRecord', T.journal, null, { Horodatage: Date.now() / 1000, Utilisateur: 'Widget criblage', Action: action, Dossier: dossier || '', Detail: detail }];
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const dateFr = v => { if (v == null || v === '') return ''; const d = typeof v === 'number' ? new Date(v * 1000) : new Date(v); return isNaN(d) ? String(v) : d.toLocaleDateString('fr-FR', { timeZone: 'UTC' }); };
+const aujourdhui = () => { const d = new Date(); return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 1000; };
+const jours = v => v ? Math.floor((aujourdhui() - v) / 86400) : null;
+const c = d => data.champs[String(d.dossier_number)] || {};
+const nom = d => [c(d).prenom_s_du_beneficiaire, c(d).nom_de_naissance_du_beneficiaire].filter(Boolean).join(' ') || '(sans nom)';
+function toast(m) { const t = document.getElementById('toast'); t.textContent = m; t.classList.add('on'); setTimeout(() => t.classList.remove('on'), 2400); }
+
+// Où en est le dossier au regard du criblage ?
+const aCribler = d => !d.Criblage_envoi_date && !d.Criblage_resultat;
+const enCoursDeCriblage = d => d.Criblage_envoi_date && !d.Criblage_resultat;
+const filtres = { envoyer: aCribler, cours: enCoursDeCriblage, differes: d => d.Criblage_resultat === 'Différé', faits: d => ['Inconnu', 'Connu'].includes(d.Criblage_resultat) };
+
+function rendre() {
+  document.getElementById('onglets').innerHTML = ONGLETS.map(([k, l]) =>
+    `<button data-onglet="${k}" class="${onglet === k ? 'plein' : ''}">${l}<span class="n">${data.dossiers.filter(filtres[k]).length}</span></button>`).join('');
+  const el = document.getElementById('contenu');
+  el.innerHTML = onglet === 'envoyer' ? vueEnvoyer() : onglet === 'cours' ? vueLots() : vueListe(onglet);
+}
+function vueEnvoyer() {
+  const ds = data.dossiers.filter(aCribler).sort((a, b) => (a.Jours_restants ?? 1e9) - (b.Jours_restants ?? 1e9));
+  if (!ds.length) return '<div class="vide">Aucun dossier à cribler.</div>';
+  const n = choisis.size;
+  return `<div class="barre">
+      <span class="compteur ${n >= MAX_LOT ? 'plein' : ''}">${n} / ${MAX_LOT}</span>
+      <button id="auto">Sélectionner les ${Math.min(MAX_LOT, ds.length)} plus urgents</button>
+      <button id="aucun">Tout désélectionner</button>
+      <button id="exporter" class="plein" ${!n || enCours ? 'disabled' : ''}>Exporter le lot (${n})</button>
+      <span class="aide">Le fichier est prêt pour le logiciel de chiffrement. La date d'envoi est notée sur chaque dossier.</span>
+    </div>
+    <table><thead><tr><th></th><th>N° dossier</th><th>Bénéficiaire</th><th>Né(e) le</th><th>Nationalité</th><th>Déposé le</th><th>Délai</th></tr></thead><tbody>
+    ${ds.map(d => `<tr class="${choisis.has(d.id) ? 'sel' : ''}"><td><input type="checkbox" data-id="${d.id}" ${choisis.has(d.id) ? 'checked' : ''} ${!choisis.has(d.id) && n >= MAX_LOT ? 'disabled' : ''}></td>
+      <td>${esc(d.dossier_number)}</td><td>${esc(nom(d))}</td><td>${dateFr(c(d).date_de_naissance_du_beneficiaire)}</td><td>${esc(c(d).nationalite_du_beneficiaire)}</td>
+      <td>${dateFr(d.Depot_dt)}</td><td><span class="badge ${d.Jours_restants != null && d.Jours_restants < 15 ? 'alerte' : ''}">${d.Jours_restants ?? '—'} j</span></td></tr>`).join('')}
+    </tbody></table>`;
+}
+function vueLots() {
+  const ds = data.dossiers.filter(enCoursDeCriblage);
+  if (!ds.length) return '<div class="vide">Aucun lot en attente de retour.</div>';
+  const lots = {}; ds.forEach(d => (lots[d.Criblage_lot || 'Lot sans nom'] ||= []).push(d));
+  return Object.entries(lots).sort((a, b) => (a[1][0].Criblage_envoi_date || 0) - (b[1][0].Criblage_envoi_date || 0)).map(([lot, lds]) => {
+    const j = jours(lds[0].Criblage_envoi_date), relance = j != null && j > RELANCE_JOURS;
+    const complet = lds.every(d => saisies[d.id]);
+    return `<div class="lot"><div class="tete"><div><b>${esc(lot)}</b> · ${lds.length} dossier(s) · envoyé le ${dateFr(lds[0].Criblage_envoi_date)}
+        <span class="badge ${relance ? 'alerte' : ''}">${relance ? `sans réponse depuis ${j} jours : à relancer` : `envoyé il y a ${j} jour(s)`}</span></div>
+        <div><button data-tous="${esc(lot)}">Tous inconnus</button> <button class="plein" data-enreg="${esc(lot)}" ${!complet || enCours ? 'disabled' : ''}>Enregistrer le retour</button></div></div>
+      <table><tbody>${lds.map(d => `<tr><td>${esc(d.dossier_number)}</td><td>${esc(nom(d))}</td><td>${dateFr(c(d).date_de_naissance_du_beneficiaire)}</td>
+        <td class="res">${RESULTATS.map(r => `<button data-res="${r}" data-id="${d.id}" class="${r} ${saisies[d.id] === r ? 'sel' : ''}">${r}</button>`).join(' ')}</td></tr>`).join('')}</tbody></table></div>`;
+  }).join('') + '<div class="aide">Différé : le dossier est bloqué, aucun avis ne peut partir tant que le retour n\'est pas arrivé.</div>';
+}
+function vueListe(k) {
+  const ds = data.dossiers.filter(filtres[k]);
+  if (!ds.length) return `<div class="vide">Aucun dossier.</div>`;
+  return `<table><thead><tr><th>N° dossier</th><th>Bénéficiaire</th><th>Lot</th><th>Envoyé le</th><th>Retour le</th><th>Résultat</th>${k === 'differes' ? '<th>En attente depuis</th>' : ''}</tr></thead><tbody>
+    ${ds.map(d => `<tr><td>${esc(d.dossier_number)}</td><td>${esc(nom(d))}</td><td>${esc(d.Criblage_lot || '')}</td><td>${dateFr(d.Criblage_envoi_date)}</td><td>${dateFr(d.Criblage_retour_date)}</td>
+      <td class="res"><button class="${d.Criblage_resultat} sel" disabled style="opacity:1">${esc(d.Criblage_resultat)}</button></td>
+      ${k === 'differes' ? `<td>${jours(d.Criblage_retour_date) ?? '—'} jour(s)</td>` : ''}</tr>`).join('')}</tbody></table>`;
+}
+
+// --- Actions ---------------------------------------------------------------------------------
+function csv(ds) {
+  const cell = v => { const s = String(v ?? ''); return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  return '﻿' + [COLONNES_CSV.map(x => x[0]), ...ds.map(d => COLONNES_CSV.map(([, f]) => f(d, c(d))))].map(l => l.map(cell).join(';')).join('\r\n');
+}
+function telecharger(nomFichier, contenu, type) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([contenu], { type })); a.download = nomFichier; a.click();
+}
+async function exporter() {
+  const ds = data.dossiers.filter(d => choisis.has(d.id)), maintenant = new Date(), p = n => String(n).padStart(2, '0');
+  const fichier = `${maintenant.getFullYear()}_${p(maintenant.getMonth() + 1)}_${p(maintenant.getDate())}_demande_criblage.CSV`;
+  const lot = `Lot du ${maintenant.toLocaleDateString('fr-FR')} à ${p(maintenant.getHours())}h${p(maintenant.getMinutes())}`;
+  telecharger(fichier, csv(ds), 'text/csv;charset=utf-8');
+  const champs = { Criblage_envoi_date: aujourdhui(), Criblage_lot: lot };
+  await ecrire([['BulkUpdateRecord', T.dossiers, ds.map(d => d.id), Object.fromEntries(Object.entries(champs).map(([k, v]) => [k, ds.map(() => v)]))],
+    journal('EXPORT_CRIBLAGE', `${lot} : ${ds.length} dossier(s) — ${fichier}`)]);
+  ds.forEach(d => Object.assign(d, champs)); choisis.clear(); toast(`${ds.length} dossier(s) exporté(s)`);
+}
+async function enregistrerRetour(lot) {
+  const ds = data.dossiers.filter(d => enCoursDeCriblage(d) && (d.Criblage_lot || 'Lot sans nom') === lot);
+  const res = ds.map(d => saisies[d.id]);
+  await ecrire([['BulkUpdateRecord', T.dossiers, ds.map(d => d.id), { Criblage_resultat: res, Criblage_retour_date: ds.map(() => aujourdhui()) }],
+    journal('RETOUR_CRIBLAGE', `${lot} : ${RESULTATS.map(r => `${res.filter(x => x === r).length} ${r.toLowerCase()}`).join(', ')}`)]);
+  ds.forEach((d, i) => { d.Criblage_resultat = res[i]; d.Criblage_retour_date = aujourdhui(); delete saisies[d.id]; });
+  toast('Retour enregistré');
+}
+async function verrou(f) { if (enCours) return; enCours = true; rendre(); try { await f(); } catch (e) { toast('Erreur : ' + e.message); } finally { enCours = false; rendre(); } }
+
+document.body.addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b || b.disabled) return;
+  if (b.dataset.onglet) { onglet = b.dataset.onglet; rendre(); }
+  else if (b.id === 'auto') { data.dossiers.filter(aCribler).sort((a, b) => (a.Jours_restants ?? 1e9) - (b.Jours_restants ?? 1e9)).slice(0, MAX_LOT).forEach(d => choisis.add(d.id)); rendre(); }
+  else if (b.id === 'aucun') { choisis.clear(); rendre(); }
+  else if (b.id === 'exporter') verrou(exporter);
+  else if (b.dataset.res) { saisies[b.dataset.id] = b.dataset.res; rendre(); }
+  else if (b.dataset.tous) { data.dossiers.filter(d => enCoursDeCriblage(d) && (d.Criblage_lot || 'Lot sans nom') === b.dataset.tous).forEach(d => saisies[d.id] = 'Inconnu'); rendre(); }
+  else if (b.dataset.enreg) verrou(() => enregistrerRetour(b.dataset.enreg));
+});
+document.body.addEventListener('change', e => {
+  if (e.target.type !== 'checkbox' || !e.target.dataset.id) return;
+  const id = Number(e.target.dataset.id); e.target.checked ? choisis.add(id) : choisis.delete(id); rendre();
+});
+
+async function demarrer() {
+  if (!DEMARCHE && !horsGrist) { document.getElementById('contenu').innerHTML = '<div class="vide">Ajoutez ?demarche=&lt;numéro&gt; à l\'URL du widget.</div>'; return; }
+  try { await charger(); } catch (e) { document.getElementById('contenu').innerHTML = `<div class="vide">Impossible de lire les tables : ${esc(e.message)}</div>`; return; }
+  rendre();
+}
+function demo() {
+  const auj = aujourdhui(), noms = [['Tintin', 'RÉPORTER'], ['Tryphon', 'TOURNESOL'], ['Bianca', 'CASTAFIORE'], ['Séraphin', 'LAMPION']];
+  const dossiers = noms.map((n, i) => ({ id: i + 1, dossier_number: String(90000001 + i), Jours_restants: 50 - i * 10, Depot_dt: auj - (10 + i * 10) * 86400,
+    ...(i >= 2 ? { Criblage_envoi_date: auj - 34 * 86400, Criblage_lot: 'Lot fictif' } : {}) }));
+  return { dossiers, champs: Object.fromEntries(dossiers.map((d, i) => [d.dossier_number, { prenom_s_du_beneficiaire: noms[i][0], nom_de_naissance_du_beneficiaire: noms[i][1], nationalite_du_beneficiaire: 'Syldavie' }])) };
+}
+if (horsGrist) { document.getElementById('demo').hidden = false; demarrer(); }
+else { grist.ready({ requiredAccess: 'full' }); let p = true; grist.onRecords(() => { if (p) { p = false; demarrer(); } }); setTimeout(() => { if (p) { p = false; demarrer(); } }, 1500); }
+</script>
+</body>
+</html>

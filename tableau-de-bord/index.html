@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tableau de bord</title>
+<!-- Widget Grist : indicateurs de délai, volumes et avis, avec filtres. Paramètre d'URL requis : ?demarche=<numéro>. Accès complet requis (lecture de deux tables). -->
+<script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root { --bleu: #000091; --bleu-clair: #e3e3fd; --texte: #161616; --gris: #666; --bord: #ddd; --fond: #f6f6f6; --orange: #b34000; --jaune-clair: #feecc2; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 Marianne, system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--texte); background: #fff; }
+  .app { display: grid; grid-template-columns: 260px 1fr; min-height: 100vh; }
+  aside { background: var(--fond); border-right: 1px solid var(--bord); padding: 14px; }
+  aside h1 { font-size: 17px; margin: 0 0 14px; color: var(--bleu); }
+  aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--gris); margin: 16px 0 6px; }
+  aside label { display: flex; gap: 6px; align-items: center; font-size: 13px; padding: 2px 0; }
+  select, input[type=month] { width: 100%; font: inherit; padding: 5px 7px; border: 1px solid var(--bord); border-radius: 4px; background: #fff; }
+  .periode { display: grid; grid-template-columns: 1fr; gap: 6px; }
+  button { font: inherit; border-radius: 4px; padding: 5px 10px; cursor: pointer; border: 1px solid var(--bleu); background: #fff; color: var(--bleu); margin-top: 14px; width: 100%; }
+  main { padding: 18px 22px 40px; min-width: 0; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .kpi { background: var(--fond); border-radius: 8px; padding: 12px 14px; }
+  .kpi .v { font-size: 26px; font-weight: 700; color: var(--bleu); line-height: 1.1; }
+  .kpi .v small { font-size: 14px; font-weight: 600; }
+  .kpi .l { font-size: 12px; color: var(--gris); margin-top: 4px; }
+  .kpi.alerte .v { color: var(--orange); }
+  .graphes { display: grid; grid-template-columns: 1.6fr 1fr; gap: 16px; margin-top: 18px; }
+  .carte { border: 1px solid var(--bord); border-radius: 8px; padding: 12px 14px; min-width: 0; }
+  .carte h3 { font-size: 14px; margin: 0 0 8px; }
+  .carte canvas { max-height: 260px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--bord); }
+  th { color: var(--gris); font-weight: 600; font-size: 12px; background: var(--fond); }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+  tfoot td { font-weight: 700; background: var(--bleu-clair); }
+  .defile { max-height: 320px; overflow: auto; }
+  .demo { background: var(--jaune-clair); padding: 4px 10px; font-size: 12px; text-align: center; }
+  .vide { color: var(--gris); padding: 40px; text-align: center; }
+</style>
+</head>
+<body>
+<div id="demo" class="demo" hidden>Mode démonstration hors Grist — données fictives</div>
+<div class="app">
+  <aside>
+    <h1>Tableau de bord</h1>
+    <h2>Période de réception</h2>
+    <div class="periode"><input type="month" id="debut"><input type="month" id="fin"></div>
+    <h2>Nature de l'avis</h2><select id="avis"></select>
+    <h2>Nationalité</h2><select id="nationalite"></select>
+    <h2>Établissements</h2><div id="etabs"></div>
+    <button id="raz">Réinitialiser les filtres</button>
+  </aside>
+  <main id="contenu"><div class="vide">Chargement…</div></main>
+</div>
+<script>
+const DEMARCHE = new URLSearchParams(location.search).get('demarche') || '';
+const T = { dossiers: `Demarche_${DEMARCHE}_dossiers`, champs: `Demarche_${DEMARCHE}_champs` };
+const AVIS = { AF: 'Favorable', AF1: 'Favorable avec précautions', AR1: 'Réservé — niveau 1', AR2: 'Réservé — niveau 2', AR3: 'Réservé — niveau 3', AR4: 'Réservé — niveau 4', AD: 'Défavorable' };
+const COULEURS = { AF: '#18753c', AF1: '#5ea46b', AR1: '#d69a00', AR2: '#c08000', AR3: '#b34000', AR4: '#8a3a00', AD: '#ce0500' };
+
+let rows = [], graphes = {};
+const horsGrist = window.self === window.top;
+const lignes = t => (t.id || []).map((id, i) => { const o = { id }; for (const k in t) o[k] = t[k][i]; return o; });
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const dateFr = v => v ? new Date(v * 1000).toLocaleDateString('fr-FR', { timeZone: 'UTC' }) : '';
+const mois = s => { const d = new Date(s * 1000); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`; };
+const moisFr = m => { const [a, mm] = m.split('-'); return `${mm}_${a}`; };                 // format MM_AAAA
+const nb2 = v => v == null || isNaN(v) ? '—' : v.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const moyenne = t => t.length ? t.reduce((a, b) => a + b, 0) / t.length : null;
+const mediane = t => { if (!t.length) return null; const s = [...t].sort((a, b) => a - b), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+
+// Une ligne par dossier, avec ce dont le tableau de bord a besoin
+function preparer(dossiers, champs) {
+  return dossiers.map(d => {
+    const c = champs[String(d.dossier_number)] || {};
+    const recu = d.date_depot ? Date.parse(d.date_depot) / 1000 : d.Depot_dt;  // horodatage de dépôt DN
+    const delai = d.Avis_date && recu ? (d.Avis_date - recu) / 86400 : null;     // réception → envoi de l'avis, en jours
+    return { d, n: String(d.dossier_number), recu, avis: d.Avis_final || '', envoye: !!d.Avis_date, delai,
+      etab: c.quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr || '(non renseigné)', nat: c.nationalite_du_beneficiaire || '(non renseignée)' };
+  }).filter(r => r.recu);
+}
+async function charger() {
+  if (horsGrist) return demo();
+  const [d, c] = await Promise.all([grist.docApi.fetchTable(T.dossiers), grist.docApi.fetchTable(T.champs)]);
+  return preparer(lignes(d), Object.fromEntries(lignes(c).map(x => [String(x.dossier_number), x])));
+}
+
+function remplirFiltres() {
+  const ms = [...new Set(rows.map(r => mois(r.recu)))].sort();
+  document.getElementById('debut').value = ms[0] || ''; document.getElementById('fin').value = ms[ms.length - 1] || '';
+  document.getElementById('avis').innerHTML = '<option value="">Toutes</option><option value="-">Sans avis</option>' + Object.entries(AVIS).map(([k, l]) => `<option value="${k}">${l}</option>`).join('');
+  document.getElementById('nationalite').innerHTML = '<option value="">Toutes</option>' + [...new Set(rows.map(r => r.nat))].sort().map(n => `<option>${esc(n)}</option>`).join('');
+  document.getElementById('etabs').innerHTML = [...new Set(rows.map(r => r.etab))].sort().map(e => `<label><input type="checkbox" value="${esc(e)}" checked> ${esc(e)}</label>`).join('');
+}
+function filtrees() {
+  const deb = document.getElementById('debut').value, fin = document.getElementById('fin').value, av = document.getElementById('avis').value,
+        nat = document.getElementById('nationalite').value, etabs = new Set([...document.querySelectorAll('#etabs input:checked')].map(i => i.value));
+  return rows.filter(r => (!deb || mois(r.recu) >= deb) && (!fin || mois(r.recu) <= fin) && (!av || (av === '-' ? !r.avis : r.avis === av))
+    && (!nat || r.nat === nat) && etabs.has(r.etab));
+}
+function rendre() {
+  const f = filtrees(), delais = f.filter(r => r.delai != null).map(r => r.delai);
+  const enCours = f.filter(r => !r.envoye), risque = enCours.filter(r => r.d.Jours_restants != null && r.d.Jours_restants < 15);
+  const kpi = (v, l, alerte) => `<div class="kpi ${alerte ? 'alerte' : ''}"><div class="v">${v}</div><div class="l">${l}</div></div>`;
+  const el = document.getElementById('contenu');
+  el.innerHTML = `<div class="kpis">
+      ${kpi(f.length, 'demandes reçues')}${kpi(f.filter(r => r.envoye).length, 'avis envoyés')}
+      ${kpi(nb2(moyenne(delais)) + ' <small>j</small>', 'délai moyen réception → avis')}${kpi(nb2(mediane(delais)) + ' <small>j</small>', 'délai médian réception → avis')}
+      ${kpi(enCours.length, 'en cours d\'instruction')}${kpi(risque.length, 'à moins de 15 jours de l\'échéance', risque.length > 0)}
+      ${kpi(f.filter(r => r.d.Criblage_resultat === 'Différé' && !r.envoye).length, 'bloqués par un criblage différé')}
+    </div>
+    <div class="graphes">
+      <div class="carte"><h3>Demandes reçues par mois</h3><canvas id="g-mois"></canvas></div>
+      <div class="carte"><h3>Avis envoyés par nature</h3><canvas id="g-avis"></canvas></div>
+    </div>
+    <div class="carte" style="margin-top:16px"><h3>Délai de traitement par dossier (en jours)</h3><div class="defile"><table>
+      <thead><tr><th>N° dossier</th><th>Établissement</th><th>Reçu le</th><th>Avis</th><th>Envoyé le</th><th class="n">Délai</th></tr></thead>
+      <tbody>${f.filter(r => r.delai != null).sort((a, b) => b.d.Avis_date - a.d.Avis_date).map(r => `<tr><td>${r.n}</td><td>${esc(r.etab)}</td><td>${dateFr(r.recu)}</td>
+        <td>${esc(AVIS[r.avis] || r.avis)}</td><td>${dateFr(r.d.Avis_date)}</td><td class="n">${nb2(r.delai)}</td></tr>`).join('') || '<tr><td colspan="6">Aucun avis envoyé sur la sélection.</td></tr>'}</tbody>
+      <tfoot><tr><td colspan="5">Temps moyen · temps médian</td><td class="n">${nb2(moyenne(delais))} · ${nb2(mediane(delais))}</td></tr></tfoot></table></div></div>`;
+  // Courbe par mois (tous les mois de la période, même vides)
+  const deb = document.getElementById('debut').value, fin = document.getElementById('fin').value, ms = [];
+  if (deb && fin) for (let [a, m] = deb.split('-').map(Number); `${a}-${String(m).padStart(2, '0')}` <= fin; m === 12 ? (a++, m = 1) : m++) ms.push(`${a}-${String(m).padStart(2, '0')}`);
+  Object.values(graphes).forEach(g => g.destroy());
+  if (!window.Chart) return;
+  graphes.mois = new Chart(document.getElementById('g-mois'), { type: 'line', data: { labels: ms.map(moisFr),
+    datasets: [{ label: 'Demandes', data: ms.map(m => f.filter(r => mois(r.recu) === m).length), borderColor: '#000091', backgroundColor: 'rgba(0,0,145,.1)', fill: true, tension: .25 }] },
+    options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }, animation: false } });
+  const codes = Object.keys(AVIS).filter(k => f.some(r => r.envoye && r.avis === k));
+  graphes.avis = new Chart(document.getElementById('g-avis'), { type: 'bar', data: { labels: codes.map(k => AVIS[k]),
+    datasets: [{ data: codes.map(k => f.filter(r => r.envoye && r.avis === k).length), backgroundColor: codes.map(k => COULEURS[k]) }] },
+    options: { indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, ticks: { precision: 0 } } }, animation: false } });
+}
+document.querySelector('aside').addEventListener('change', rendre);
+document.getElementById('raz').addEventListener('click', () => { remplirFiltres(); rendre(); });
+
+async function demarrer() {
+  if (!DEMARCHE && !horsGrist) { document.getElementById('contenu').innerHTML = '<div class="vide">Ajoutez ?demarche=&lt;numéro&gt; à l\'URL du widget.</div>'; return; }
+  try { rows = await charger(); } catch (e) { document.getElementById('contenu').innerHTML = `<div class="vide">Impossible de lire les tables : ${esc(e.message)}</div>`; return; }
+  if (!rows.length) { document.getElementById('contenu').innerHTML = '<div class="vide">Aucun dossier.</div>'; return; }
+  remplirFiltres(); rendre();
+}
+function demo() {  // entièrement fictif
+  const t0 = Date.UTC(2026, 0, 5) / 1000, codes = Object.keys(AVIS), d = [], c = {};
+  for (let i = 0; i < 60; i++) {
+    const recu = t0 + i * 4 * 86400, n = String(90000000 + i), envoye = i < 48;
+    d.push({ id: i + 1, dossier_number: n, Depot_dt: recu, Jours_restants: envoye ? null : 60 - (i - 48) * 4, Avis_final: envoye ? codes[i % 7 < 4 ? 0 : i % 7] : '',
+      Avis_date: envoye ? recu + (20 + (i * 7) % 25) * 86400 : null, Criblage_resultat: i === 55 ? 'Différé' : '' });
+    c[n] = { quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr: ['Institut fictif A', 'Institut fictif B', 'Université fictive C'][i % 3], nationalite_du_beneficiaire: ['Syldavie', 'Bordurie', 'Belgistan'][i % 3] };
+  }
+  return preparer(d, c);
+}
+if (horsGrist) { document.getElementById('demo').hidden = false; demarrer(); }
+else { grist.ready({ requiredAccess: 'full' }); let p = true; grist.onRecords(() => { if (p) { p = false; demarrer(); } }); setTimeout(() => { if (p) { p = false; demarrer(); } }, 1500); }
+</script>
+</body>
+</html>
