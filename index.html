@@ -329,6 +329,7 @@ detail.addEventListener('click', e => {
     const p = PIECES.find(x => x.cle === b.dataset.piece), cur = brouillon[p.cle];
     cur.statut = cur.statut === b.dataset.statut ? '' : b.dataset.statut;
     const valides = motifsPour(p, cur.statut).map(m => m.id); cur.motifs = cur.motifs.filter(id => valides.includes(id));  // motifs du nouveau statut seulement
+    if (cur.statut === 'Valide') cur.commentaire = '';  // pas de motif ni de commentaire résiduel sur une pièce valide
     rendreDetail();
   }
   else if (b.id === 'enregistrer') verrou(enregistrer);
