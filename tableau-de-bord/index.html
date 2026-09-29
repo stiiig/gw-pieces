@@ -16,7 +16,7 @@
   aside h1 { font-size: 17px; margin: 0 0 14px; color: var(--bleu); }
   aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--gris); margin: 16px 0 6px; }
   aside label { display: flex; gap: 6px; align-items: center; font-size: 13px; padding: 2px 0; }
-  select, input[type=month] { width: 100%; font: inherit; padding: 5px 7px; border: 1px solid var(--bord); border-radius: 4px; background: #fff; }
+  select { width: 100%; font: inherit; padding: 5px 7px; border: 1px solid var(--bord); border-radius: 4px; background: #fff; }
   .periode { display: grid; grid-template-columns: 1fr; gap: 6px; }
   button { font: inherit; border-radius: 4px; padding: 5px 10px; cursor: pointer; border: 1px solid var(--bleu); background: #fff; color: var(--bleu); margin-top: 14px; width: 100%; }
   main { padding: 18px 22px 40px; min-width: 0; }
@@ -46,7 +46,7 @@
   <aside>
     <h1>Tableau de bord</h1>
     <h2>Période de réception</h2>
-    <div class="periode"><input type="month" id="debut"><input type="month" id="fin"></div>
+    <div class="periode"><select id="debut"></select><select id="fin"></select></div>
     <h2>Nature de l'avis</h2><select id="avis"></select>
     <h2>Nationalité</h2><select id="nationalite"></select>
     <h2>Établissements</h2><div id="etabs"></div>
@@ -66,6 +66,7 @@ const lignes = t => (t.id || []).map((id, i) => { const o = { id }; for (const k
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const dateFr = v => v ? new Date(v * 1000).toLocaleDateString('fr-FR', { timeZone: 'UTC' }) : '';
 const mois = s => { const d = new Date(s * 1000); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`; };
+const nomMois = m => { const [a, mm] = m.split('-'); return new Date(Date.UTC(a, mm - 1, 1)).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric', timeZone: 'UTC' }); };
 const moisFr = m => { const [a, mm] = m.split('-'); return `${mm}_${a}`; };                 // format MM_AAAA
 const nb2 = v => v == null || isNaN(v) ? '—' : v.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const moyenne = t => t.length ? t.reduce((a, b) => a + b, 0) / t.length : null;
@@ -89,6 +90,8 @@ async function charger() {
 
 function remplirFiltres() {
   const ms = [...new Set(rows.map(r => mois(r.recu)))].sort();
+  const options = ms.map(m => `<option value="${m}">${nomMois(m)}</option>`).join('');
+  document.getElementById('debut').innerHTML = options; document.getElementById('fin').innerHTML = options;
   document.getElementById('debut').value = ms[0] || ''; document.getElementById('fin').value = ms[ms.length - 1] || '';
   document.getElementById('avis').innerHTML = '<option value="">Toutes</option><option value="-">Sans avis</option>' + Object.entries(AVIS).map(([k, l]) => `<option value="${k}">${l}</option>`).join('');
   document.getElementById('nationalite').innerHTML = '<option value="">Toutes</option>' + [...new Set(rows.map(r => r.nat))].sort().map(n => `<option>${esc(n)}</option>`).join('');

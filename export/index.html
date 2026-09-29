@@ -61,6 +61,10 @@ const DEMARCHE = new URLSearchParams(location.search).get('demarche') || '';
 const T = { dossiers: `Demarche_${DEMARCHE}_dossiers`, champs: `Demarche_${DEMARCHE}_champs`, journal: 'Journal' };
 const AVIS = { AF: 'Favorable', AF1: 'Favorable avec précautions', AR1: 'Réservé — niveau 1', AR2: 'Réservé — niveau 2', AR3: 'Réservé — niveau 3', AR4: 'Réservé — niveau 4', AD: 'Défavorable' };
 const TECHNIQUES = /^(id|manualSort|gristHelper_.*|champ_id|dossier_id|labels_json|dossiers_supprimes_DN|.*_id)$/;
+// Libellés lisibles des colonnes techniques de la synchronisation (qui n'en ont pas)
+const LIBELLES = { dossier_number: 'N° dossier', state: 'État dans Démarche Numérique', date_depot: 'Date de dépôt', date_derniere_modification: 'Dernière modification',
+  date_expiration: "Date d'expiration", date_traitement: 'Date de traitement', date_suppression: 'Date de suppression', motivation: 'Motivation', label_names: 'Labels',
+  suivi_par: 'Suivi par', date_accuse_lecture: "Date d'accusé de lecture", correction_instructeur: 'Correction instructeur' };
 // Colonnes cochées par défaut (si présentes)
 const USUELLES = ['dossier_number', 'state', 'Depot_dt', 'prenom_s_du_beneficiaire', 'nom_de_naissance_du_beneficiaire', 'date_de_naissance_du_beneficiaire',
   'nationalite_du_beneficiaire', 'quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr', 'Criblage_resultat', 'Avis_final', 'Avis_date', 'Jours_restants'];
@@ -87,7 +91,7 @@ async function charger() {
   const refTable = Object.fromEntries(lignes(tables).map(t => [t.tableId, t.id]));
   const meta = lignes(cols);
   const desc = (tableId, groupe) => meta.filter(m => m.parentId === refTable[tableId] && !TECHNIQUES.test(m.colId))
-    .map(m => ({ id: m.colId, label: m.label || m.colId, type: m.type || 'Any', groupe }));
+    .map(m => ({ id: m.colId, label: LIBELLES[m.colId] || (m.label !== m.colId && m.label) || m.colId, type: m.type || 'Any', groupe }));
   const champs = Object.fromEntries(lignes(c).map(x => [String(x.dossier_number), x]));
   const vuD = new Set();
   colonnes = [...desc(T.dossiers, 'Dossier'), ...desc(T.champs, 'Formulaire').filter(x => x.id !== 'dossier_number')]
