@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Avis</title>
+<!-- Widget Grist : proposition, décision et courrier d'avis d'un dossier. Paramètre d'URL requis : ?demarche=<numéro>. Accès complet requis.
+     Les textes du courrier (visas, signataire, phrases) sont lus dans les tables Modeles_Avis et Parametres_avis du document. -->
+<script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+  :root {
+    --bleu: #000091; --bleu-clair: #e3e3fd; --texte: #161616; --gris: #666; --bord: #ddd; --fond: #f6f6f6;
+    --vert: #18753c; --orange: #b34000; --orange-clair: #ffe9e6; --jaune: #d69a00; --jaune-clair: #feecc2; --rouge: #ce0500;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 Marianne, system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--texte); background: #fff; }
+  .app { display: grid; grid-template-columns: 320px 1fr; height: 100vh; }
+  aside { border-right: 1px solid var(--bord); display: flex; flex-direction: column; min-height: 0; background: var(--fond); }
+  aside header { padding: 12px; border-bottom: 1px solid var(--bord); }
+  aside h1 { font-size: 15px; margin: 0 0 8px; color: var(--bleu); }
+  input[type=search] { width: 100%; padding: 7px 9px; border: 1px solid var(--bord); border-radius: 4px; font: inherit; }
+  .onglets { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  .onglets button { padding: 3px 8px; font-size: 12px; }
+  .onglets .n { display: inline-block; min-width: 16px; margin-left: 4px; font-weight: 700; }
+  .liste { overflow-y: auto; flex: 1; }
+  .item { padding: 10px 12px; border-bottom: 1px solid var(--bord); cursor: pointer; background: #fff; }
+  .item:hover { background: var(--bleu-clair); }
+  .item.actif { background: var(--bleu-clair); box-shadow: inset 3px 0 0 var(--bleu); }
+  .item .nom { font-weight: 600; }
+  .item .meta { color: var(--gris); font-size: 12px; display: flex; justify-content: space-between; gap: 6px; margin-top: 2px; }
+  main { overflow-y: auto; padding: 18px 22px 40px; min-width: 0; }
+  .vide { color: var(--gris); padding: 40px; text-align: center; }
+  .entete { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+  .entete h2 { margin: 0; font-size: 20px; }
+  .sous { color: var(--gris); margin-top: 2px; }
+  a.bouton, button { font: inherit; border-radius: 4px; padding: 6px 12px; cursor: pointer; border: 1px solid var(--bleu); background: #fff; color: var(--bleu); text-decoration: none; display: inline-block; }
+  button.plein { background: var(--bleu); color: #fff; }
+  button.rouge { border-color: var(--rouge); color: var(--rouge); }
+  button.rouge.plein { background: var(--rouge); color: #fff; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; background: var(--bleu-clair); color: var(--bleu); white-space: nowrap; }
+  .badge.alerte { background: var(--orange-clair); color: var(--orange); }
+  .badge.vert { background: #dff5e6; color: var(--vert); }
+  .badge.rouge { background: #ffe5e5; color: var(--rouge); }
+  .badge.jaune { background: var(--jaune-clair); color: #8a5a00; }
+  .etat { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; margin: 14px 0; }
+  .etat div { background: var(--fond); border-radius: 6px; padding: 8px 12px; }
+  .etat dt { color: var(--gris); font-size: 12px; } .etat dd { margin: 2px 0 0; font-weight: 600; }
+  .etape { border: 1px solid var(--bord); border-radius: 8px; padding: 14px 16px; margin-top: 14px; }
+  .etape h3 { margin: 0 0 4px; font-size: 16px; }
+  .etape .qui { color: var(--gris); font-size: 12px; margin-bottom: 10px; }
+  .choix { display: flex; flex-wrap: wrap; gap: 6px; }
+  .choix button.sel { background: var(--bleu); color: #fff; }
+  .choix button.sel.rouge { background: var(--rouge); border-color: var(--rouge); color: #fff; }
+  textarea { width: 100%; font: inherit; padding: 7px 9px; border: 1px solid var(--bord); border-radius: 4px; margin-top: 10px; resize: vertical; }
+  textarea.manque { border-color: var(--rouge); box-shadow: 0 0 0 1px var(--rouge); }
+  .aide { font-size: 12px; color: var(--gris); margin-top: 6px; }
+  .bloquant { background: var(--orange-clair); color: var(--orange); border-radius: 6px; padding: 10px 14px; margin-top: 14px; font-weight: 600; }
+  .barre { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  .rappel { background: var(--fond); border-radius: 6px; padding: 10px 14px; margin-top: 8px; }
+  /* aperçu du courrier */
+  .lettre { position: relative; overflow: hidden; margin-top: 14px; border: 1px solid var(--bord); box-shadow: 0 2px 8px rgba(0,0,0,.08); padding: 36px 44px; max-width: 760px; font: 13px/1.5 Georgia, "Times New Roman", serif; background: #fff; }
+  .lettre h4 { text-align: center; font-size: 15px; margin: 0 0 10px; }
+  .lettre .intitule { text-decoration: underline; font-weight: 700; margin: 8px 0 12px; }
+  .lettre p { margin: 0 0 9px; white-space: pre-wrap; }
+  .lettre .champ { font-weight: 700; }
+  .lettre .manque { background: var(--jaune-clair); padding: 0 4px; font-style: italic; }
+  .lettre .avert { font-weight: 700; margin-top: 16px; }
+  .filigrane { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+  .filigrane span { transform: rotate(-35deg); font: 700 22px system-ui, sans-serif; color: rgba(0,0,145,.10); white-space: nowrap; }
+  .toast { position: fixed; bottom: 16px; right: 16px; background: var(--texte); color: #fff; padding: 8px 14px; border-radius: 4px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.on { opacity: 1; }
+  .demo { background: var(--jaune-clair); padding: 4px 10px; font-size: 12px; text-align: center; }
+</style>
+</head>
+<body>
+<div id="demo" class="demo" hidden>Mode démonstration hors Grist — données fictives</div>
+<div class="app">
+  <aside>
+    <header>
+      <h1>Avis</h1>
+      <input id="recherche" type="search" placeholder="N° de dossier, nom…">
+      <div id="onglets" class="onglets"></div>
+    </header>
+    <div id="liste" class="liste"></div>
+  </aside>
+  <main id="detail"><div class="vide">Chargement…</div></main>
+</div>
+<div id="toast" class="toast"></div>
+
+<script>
+const DEMARCHE = new URLSearchParams(location.search).get('demarche') || '';
+const T = {
+  dossiers: `Demarche_${DEMARCHE}_dossiers`, champs: `Demarche_${DEMARCHE}_champs`,
+  zrr: `Demarche_${DEMARCHE}_repetable_zrr_concernee_s`,
+  modeles: 'Modeles_Avis', parametres: 'Parametres_avis', journal: 'Journal',
+};
+// Les 7 avis, dans l'ordre d'affichage, avec leur libellé en clair.
+const AVIS = [
+  { code: 'AF', libelle: 'Favorable', favorable: true },
+  { code: 'AF1', libelle: 'Favorable avec précautions', favorable: true },
+  { code: 'AR1', libelle: 'Réservé — niveau 1' }, { code: 'AR2', libelle: 'Réservé — niveau 2' },
+  { code: 'AR3', libelle: 'Réservé — niveau 3' }, { code: 'AR4', libelle: 'Réservé — niveau 4' },
+  { code: 'AD', libelle: 'Défavorable', rouge: true },
+];
+const libelle = code => (AVIS.find(a => a.code === code) || {}).libelle || code || '—';
+const ONGLETS = [
+  ['proposer', 'À proposer'], ['decideur', 'Chez le décideur'], ['envoyer', 'À envoyer'],
+  ['ar3', 'Réservé niv. 3 en attente'], ['defavorables', 'Défavorables'], ['tous', 'Tous'],
+];
+
+let data = { dossiers: [], champs: {}, zrr: {}, modeles: {}, params: {} };
+let selection = null, onglet = 'proposer', enCours = false;
+let saisie = { proposition: '', motivation: '', decision: '', mesures: '' };
+
+// --- Accès Grist (ou démo hors Grist) ---------------------------------------------------------
+const horsGrist = window.self === window.top;
+const lignes = t => (t.id || []).map((id, i) => { const o = { id }; for (const k in t) o[k] = t[k][i]; return o; });
+async function lire(nom, optionnelle) {
+  try { return lignes(await grist.docApi.fetchTable(nom)); } catch (e) { if (optionnelle) return []; throw e; }
+}
+async function charger() {
+  if (horsGrist) { data = demo(); return; }
+  const [dossiers, champs, zrr, modeles, params] = await Promise.all([
+    lire(T.dossiers), lire(T.champs), lire(T.zrr, true), lire(T.modeles, true), lire(T.parametres, true)]);
+  data = {
+    dossiers,
+    champs: Object.fromEntries(champs.map(c => [String(c.dossier_number), c])),
+    zrr: zrr.reduce((a, z) => ((a[String(z.dossier_number)] ||= []).push(z.numero_de_la_zrr), a), {}),
+    modeles: Object.fromEntries(modeles.map(m => [m.Code, m])),
+    params: Object.fromEntries(params.map(p => [p.Cle, p.Valeur])),
+  };
+}
+async function ecrire(actions) {
+  if (horsGrist) { console.log('[démo] actions non envoyées', actions); return; }
+  await grist.docApi.applyUserActions(actions);
+}
+function journal(d, action, detail) {
+  return ['AddRecord', T.journal, null, { Horodatage: Date.now() / 1000, Utilisateur: 'Widget avis', Action: action, Dossier: String(d.dossier_number), Detail: detail }];
+}
+async function auteurDerniereAction(d, action) {  // e-mail posé par Grist sur la ligne de journal (formule de déclenchement)
+  if (horsGrist) return 'agent.demo@exemple.invalid';
+  const j = lignes(await grist.docApi.fetchTable(T.journal)).filter(r => r.Action === action && r.Dossier === String(d.dossier_number));
+  return (j[j.length - 1] || {}).Auteur || '';
+}
+
+// --- Outils ----------------------------------------------------------------------------------
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const dateFr = v => { if (v == null || v === '') return ''; const d = typeof v === 'number' ? new Date(v * 1000) : new Date(v);
+  return isNaN(d) ? String(v) : d.toLocaleDateString('fr-FR', { timeZone: 'UTC' }); };
+const aujourdhui = () => { const d = new Date(); return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 1000; };
+const joursDepuis = v => v ? Math.floor((aujourdhui() - v) / 86400) : null;
+function toast(m) { const t = document.getElementById('toast'); t.textContent = m; t.classList.add('on'); setTimeout(() => t.classList.remove('on'), 2400); }
+function beneficiaire(d) {
+  const c = data.champs[String(d.dossier_number)] || {};
+  return { c, nom: c.nom_de_naissance_du_beneficiaire || '', prenoms: c.prenom_s_du_beneficiaire || '',
+    complet: [c.prenom_s_du_beneficiaire, c.nom_de_naissance_du_beneficiaire].filter(Boolean).join(' ') || '(sans nom)' };
+}
+// Où en est le dossier ? (une seule étape à la fois)
+function etape(d) {
+  if (d.Avis_date) return 'envoye';
+  if (d.Etat_interne === 'Chez le décideur') return 'decideur';
+  if (d.Avis_final === 'AR3' && d.AR3_date_notification && !d.AR3_decision) return 'ar3';
+  if (d.Avis_final) return 'envoyer';
+  return 'proposer';
+}
+function dansOnglet(d, o) {
+  if (o === 'tous') return true;
+  if (o === 'defavorables') return d.Avis_final === 'AD' && !!d.Avis_date;
+  return etape(d) === o;
+}
+const PIECES = [['identite', 'Identité'], ['cv', 'CV'], ['mission', 'Mission'], ['financement', 'Financement']];
+
+// --- Liste -----------------------------------------------------------------------------------
+function rendreOnglets() {
+  document.getElementById('onglets').innerHTML = ONGLETS.map(([k, l]) =>
+    `<button data-onglet="${k}" class="${onglet === k ? 'plein' : ''}">${l}<span class="n">${data.dossiers.filter(d => dansOnglet(d, k)).length}</span></button>`).join('');
+}
+function badgeListe(d) {
+  const e = etape(d);
+  if (e === 'ar3') { const j = 15 - joursDepuis(d.AR3_date_notification); return `<span class="badge ${j < 0 ? 'rouge' : 'jaune'}">${j < 0 ? 'délai dépassé' : 'J-' + j}</span>`; }
+  if (d.Avis_final === 'AD' && d.Avis_date) { const j = d.Echeance_recours ? Math.ceil((d.Echeance_recours - aujourdhui()) / 86400) : null;
+    return `<span class="badge ${j != null && j < 0 ? 'vert' : 'rouge'}">${j == null ? 'Défavorable' : j < 0 ? 'recours échu' : 'recours J-' + j}</span>`; }
+  if (d.Avis_final) return `<span class="badge">${esc(libelle(d.Avis_final))}</span>`;
+  if (d.Proposition_instructeur) return `<span class="badge jaune">proposé : ${esc(libelle(d.Proposition_instructeur))}</span>`;
+  return `<span class="badge ${d.Jours_restants != null && d.Jours_restants < 15 ? 'alerte' : ''}">${d.Jours_restants ?? '—'} j restants</span>`;
+}
+function rendreListe() {
+  rendreOnglets();
+  const q = document.getElementById('recherche').value.trim().toLowerCase();
+  const items = data.dossiers.filter(d => dansOnglet(d, onglet))
+    .filter(d => !q || `${d.dossier_number} ${beneficiaire(d).complet}`.toLowerCase().includes(q))
+    .sort((a, b) => (a.Jours_restants ?? 1e9) - (b.Jours_restants ?? 1e9));
+  document.getElementById('liste').innerHTML = items.length ? items.map(d => `
+    <div class="item ${d.id === selection ? 'actif' : ''}" data-id="${d.id}">
+      <div class="nom">${esc(beneficiaire(d).complet)}</div>
+      <div class="meta"><span>n° ${esc(d.dossier_number)}</span>${badgeListe(d)}</div>
+    </div>`).join('') : '<div class="vide">Aucun dossier.</div>';
+}
+
+// --- Détail ----------------------------------------------------------------------------------
+function ouvrir(id) {
+  selection = id; const d = data.dossiers.find(x => x.id === id);
+  saisie = { proposition: d.Proposition_instructeur || '', motivation: d.Motivation_refus || '', decision: d.Avis_final || d.Proposition_instructeur || '', mesures: d.AR3_mesures || '' };
+  rendreListe(); rendreDetail();
+}
+function etatDossier(d) {
+  const crib = d.Criblage_resultat || 'pas encore revenu';
+  const pieces = PIECES.map(([k, l]) => `${l} : ${d[`PJ_${k}_statut`] || '—'}`).join(' · ');
+  return `<dl class="etat">
+    <div><dt>Pièces</dt><dd style="font-weight:500">${esc(pieces)}</dd></div>
+    <div><dt>Criblage</dt><dd>${esc(crib)}</dd></div>
+    <div><dt>Délai</dt><dd>${d.Jours_restants ?? '—'} jours restants</dd></div>
+    <div><dt>Avis</dt><dd>${esc(d.Avis_final ? libelle(d.Avis_final) : d.Proposition_instructeur ? 'proposé : ' + libelle(d.Proposition_instructeur) : '—')}</dd></div>
+  </dl>`;
+}
+function rendreDetail() {
+  const el = document.getElementById('detail');
+  const d = data.dossiers.find(x => x.id === selection);
+  if (!d) { el.innerHTML = '<div class="vide">Sélectionnez un dossier dans la liste.</div>'; return; }
+  const b = beneficiaire(d), e = etape(d);
+  let corps = '';
+  if (d.Criblage_resultat === 'Différé' && !d.Avis_date) corps = `<div class="bloquant">Criblage en position différée : aucun avis ne peut partir tant que le retour n'est pas arrivé.</div>`;
+  else if (e === 'proposer') corps = blocProposer(d);
+  else if (e === 'decideur') corps = blocDecideur(d);
+  else if (e === 'ar3') corps = blocAR3(d);
+  else corps = blocCourrier(d, e === 'envoye');
+  el.innerHTML = `
+    <div class="entete"><div><h2>${esc(b.complet)}</h2>
+      <div class="sous">Dossier n° ${esc(d.dossier_number)} · ${esc((data.champs[String(d.dossier_number)] || {}).quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr || '')}</div></div>
+      ${d.Lien_dossier_DN ? `<a class="bouton" target="_blank" rel="noopener" href="${esc(d.Lien_dossier_DN.split(' ').pop())}">Dossier dans DN</a>` : ''}
+    </div>
+    ${etatDossier(d)}
+    ${corps}`;
+}
+function blocProposer(d) {
+  const crib = d.Criblage_resultat;
+  const favOk = crib === 'Inconnu';
+  const p = saisie.proposition, estAD = p === 'AD', versDecideur = p && !AVIS.find(a => a.code === p).favorable;
+  const manque = estAD && !saisie.motivation.trim();
+  return `<div class="etape"><h3>1. Proposer un avis</h3><div class="qui">Instructeur</div>
+    <div class="choix">${AVIS.map(a => `<button data-prop="${a.code}" class="${a.rouge ? 'rouge' : ''} ${p === a.code ? 'sel' : ''}" ${a.favorable && !favOk ? 'disabled' : ''}>${a.libelle}</button>`).join('')}</div>
+    ${!favOk ? `<div class="aide">Avis favorable possible seulement quand le criblage est revenu « Inconnu »${crib ? ` (résultat : ${esc(crib)})` : ' (pas encore revenu)'}.</div>` : ''}
+    ${estAD ? `<textarea id="motivation" rows="3" class="${manque ? 'manque' : ''}" placeholder="Motivation de la proposition de refus (obligatoire)">${esc(saisie.motivation)}</textarea>` : ''}
+    <div class="barre">
+      <button id="valider-prop" class="plein ${estAD ? 'rouge' : ''}" ${!p || manque || enCours ? 'disabled' : ''}>${!p ? 'Choisir un avis' : versDecideur ? 'Transmettre au décideur' : 'Valider l\'avis favorable'}</button>
+      <span class="aide">${versDecideur ? 'Réservé ou défavorable : c\'est le décideur qui arrête l\'avis.' : p ? 'Avis favorable : vous pourrez générer le courrier juste après.' : ''}</span>
+    </div></div>`;
+}
+function blocDecideur(d) {
+  const p = saisie.decision;
+  return `<div class="etape"><h3>2. Arrêter l'avis</h3><div class="qui">Décideur</div>
+    <div class="rappel">Proposition de l'instructeur : <b>${esc(libelle(d.Proposition_instructeur))}</b>${d.Motivation_refus ? `<br>Motivation : ${esc(d.Motivation_refus)}` : ''}</div>
+    <div class="choix" style="margin-top:10px">${AVIS.map(a => `<button data-dec="${a.code}" class="${a.rouge ? 'rouge' : ''} ${p === a.code ? 'sel' : ''}">${a.libelle}</button>`).join('')}</div>
+    <div class="barre"><button id="valider-dec" class="plein" ${!p || enCours ? 'disabled' : ''}>Arrêter l'avis : ${esc(libelle(p))}</button>
+      <span class="aide">Le dossier revient à l'instructeur, qui envoie le courrier.</span></div></div>`;
+}
+function blocAR3(d) {
+  const j = joursDepuis(d.AR3_date_notification), reste = 15 - j;
+  return `<div class="etape"><h3>Réservé niveau 3 — en attente des mesures de l'établissement</h3>
+    <div class="qui">Courrier envoyé le ${dateFr(d.AR3_date_notification)} · ${reste >= 0 ? `il reste <b>${reste} jour(s)</b> sur 15` : `<b style="color:var(--rouge)">délai de 15 jours dépassé de ${-reste} jour(s)</b>`}</div>
+    <textarea id="mesures" rows="3" placeholder="Mesures proposées par l'établissement">${esc(saisie.mesures)}</textarea>
+    <div class="barre">
+      <button id="enr-mesures" ${enCours ? 'disabled' : ''}>Enregistrer les mesures</button>
+      <button id="ar3-accepter" class="plein" ${!saisie.mesures.trim() || enCours ? 'disabled' : ''}>Accepter les mesures</button>
+      <button id="ar3-refuser" class="rouge ${reste < 0 ? 'plein' : ''}" ${enCours ? 'disabled' : ''}>Basculer en défavorable</button>
+    </div>
+    <div class="aide">Décideur : accepter les mesures (courrier réservé niveau 3 définitif) ou basculer en défavorable (mesures refusées ou absence de réponse sous 15 jours).</div></div>`;
+}
+function blocCourrier(d, envoye) {
+  const code = d.Avis_final, ar3Premier = code === 'AR3' && !d.AR3_date_notification;
+  return `<div class="etape"><h3>${envoye ? 'Courrier envoyé' : '3. Générer et envoyer le courrier'}</h3>
+    <div class="qui">${envoye ? `Envoyé le ${dateFr(d.Avis_date)}` : 'Instructeur'}${ar3Premier ? ' · premier courrier : demande de mesures à l\'établissement (15 jours)' : ''}</div>
+    <div class="barre">
+      <button id="pdf" class="plein" ${enCours ? 'disabled' : ''}>Télécharger le PDF</button>
+      ${envoye ? '' : `<button id="envoye" ${enCours ? 'disabled' : ''}>Marquer comme envoyé</button>`}
+      <span class="aide">Le PDF porte en filigrane le nom de l'agent qui l'a généré. Dépôt dans la messagerie du dossier DN.</span>
+    </div>
+    ${d.Avis_final === 'AD' && d.Avis_date ? `<div class="rappel">Délai de recours de deux mois : échéance le <b>${dateFr(d.Echeance_recours)}</b>.</div>` : ''}
+    <div class="lettre" id="lettre">${courrierHtml(d, 'Aperçu')}</div></div>`;
+}
+
+// --- Le courrier (mêmes blocs pour l'aperçu et le PDF) -----------------------------------------
+function courrier(d) {
+  const m = data.modeles[d.Avis_final] || {}, P = data.params, b = beneficiaire(d), c = b.c;
+  const zrr = (data.zrr[String(d.dossier_number)] || []).join(', ');
+  const date = d.Avis_date || aujourdhui();
+  const blocs = [
+    ['titre', P.Titre || ''],
+    ['intitule', '☒ ' + (m.Intitule_courrier || libelle(d.Avis_final))],
+    ['p', m.Introduction || ''],
+    ['champ', 'Courrier (message) en date du : ', null, 'date de recevabilité — définition attendue'],
+    ['champ', 'Numéro de référence de la demande : ', String(d.dossier_number)],
+    ['p', P.Visas || ''],
+    ['p', m.Phrase_decision || ''],
+    ['champ', 'Nom : ', b.nom], ['champ', 'Prénom(s) : ', b.prenoms], ['champ', 'Né(e) le : ', dateFr(c.date_de_naissance_du_beneficiaire)],
+    ['champ', 'Numéro de ZRR : ', zrr],
+  ];
+  if (m.Avec_periode) blocs.push(['champ', "Période d'accès en ZRR : ", `du ${dateFr(c.date_de_debut_de_la_mission_dans_la_zrr) || '—'} au ${dateFr(c.date_de_fin_de_la_mission_dans_la_zrr) || '—'}`]);
+  if (!['AF', 'AD'].includes(d.Avis_final) && m.Corps) blocs.push(['p', m.Corps]);
+  if (d.Avis_final === 'AR3' && d.AR3_mesures) blocs.push(['p', "Mesures proposées par l'établissement : " + d.AR3_mesures]);
+  blocs.push(['p', `Le ${dateFr(date)} à ${P.Lieu || ''}`], ['p', 'Signature numérique :'], ['p', [P.Signataire, P.Fonction, P.Service].filter(Boolean).join('\n')]);
+  if (m.Avertissement && P.Texte_avertissement) blocs.push(['avert', P.Texte_avertissement]);
+  return blocs;
+}
+function courrierHtml(d, filigrane) {
+  return courrier(d).map(([t, a, v, manque]) =>
+    t === 'titre' ? `<h4>${esc(a)}</h4>` : t === 'intitule' ? `<div class="intitule">${esc(a)}</div>`
+    : t === 'avert' ? `<p class="avert">${esc(a)}</p>`
+    : t === 'champ' ? `<p>${esc(a)}${v ? `<span class="champ">${esc(v)}</span>` : `<span class="manque">${esc(manque || 'à compléter')}</span>`}</p>`
+    : `<p>${esc(a)}</p>`).join('') + `<div class="filigrane"><span>${esc(filigrane)}</span></div>`;
+}
+function nomFichier(d) {
+  const t = { AF: 'Favorable', AF1: 'Favorable', AD: 'Défavorable' }[d.Avis_final] || 'Reserve_' + d.Avis_final;
+  return `Avis_${t}_${d.dossier_number}.pdf`;
+}
+function pdf(d, filigrane) {
+  const { jsPDF } = window.jspdf; const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const X = 22, L = 166; let y = 24;
+  const ligne = (txt, opts = {}) => {
+    doc.setFont('times', opts.gras ? 'bold' : 'normal'); doc.setFontSize(opts.taille || 11);
+    for (const l of doc.splitTextToSize(txt, L)) { if (y > 275) { doc.addPage(); y = 24; } doc.text(l, opts.centre ? 105 : X, y, { align: opts.centre ? 'center' : 'left' }); y += (opts.taille || 11) * 0.45; }
+    y += 2.5;
+  };
+  for (const [t, a, v, manque] of courrier(d)) {
+    if (t === 'titre') ligne(a, { gras: true, centre: true, taille: 13 });
+    else if (t === 'intitule') ligne(a.replace('☒ ', ''), { gras: true });  // ☒ absent des polices PDF standard
+    else if (t === 'avert') ligne(a, { gras: true });
+    else if (t === 'champ') ligne(a + (v || `[${manque || 'à compléter'}]`));
+    else for (const para of a.split('\n')) ligne(para);
+  }
+  const n = doc.getNumberOfPages();
+  for (let i = 1; i <= n; i++) {  // filigrane nominatif sur chaque page
+    doc.setPage(i); doc.saveGraphicsState(); doc.setGState(new doc.GState({ opacity: 0.12 }));
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(20); doc.setTextColor(0, 0, 145);
+    doc.text(filigrane, 105, 160, { align: 'center', angle: 35 }); doc.restoreGraphicsState(); doc.setTextColor(0, 0, 0);
+  }
+  doc.save(nomFichier(d));
+}
+
+// --- Actions ---------------------------------------------------------------------------------
+async function verrou(action) { if (enCours) return; enCours = true; rendreDetail();
+  try { await action(); } catch (err) { toast('Erreur : ' + err.message); } finally { enCours = false; rendreListe(); rendreDetail(); } }
+const courant = () => data.dossiers.find(x => x.id === selection);
+async function maj(d, champs, action, detail) {
+  await ecrire([['UpdateRecord', T.dossiers, d.id, champs], journal(d, action, detail)]);
+  Object.assign(d, champs);
+}
+const actions = {
+  'valider-prop': async () => { const d = courant(), p = saisie.proposition, fav = AVIS.find(a => a.code === p).favorable;
+    await maj(d, { Proposition_instructeur: p, Motivation_refus: p === 'AD' ? saisie.motivation : '', Etat_interne: fav ? 'En instruction' : 'Chez le décideur', ...(fav ? { Avis_final: p } : {}) },
+      'PROPOSITION_AVIS', `Proposition : ${libelle(p)}${fav ? ' (avis arrêté)' : ' → décideur'}`);
+    toast(fav ? 'Avis favorable arrêté' : 'Transmis au décideur'); },
+  'valider-dec': async () => { const d = courant(), p = saisie.decision;
+    await maj(d, { Avis_final: p, Etat_interne: 'En instruction' }, 'DECISION_AVIS', `Avis arrêté par le décideur : ${libelle(p)} (proposé : ${libelle(d.Proposition_instructeur)})`);
+    toast('Avis arrêté : ' + libelle(p)); },
+  'enr-mesures': async () => { const d = courant(); await maj(d, { AR3_mesures: saisie.mesures }, 'AR3_MESURES', 'Mesures de l\'établissement enregistrées'); toast('Mesures enregistrées'); },
+  'ar3-accepter': async () => { const d = courant(); await maj(d, { AR3_mesures: saisie.mesures, AR3_decision: 'Mesures acceptées' }, 'AR3_DECISION', 'Mesures acceptées — courrier réservé niveau 3 définitif'); toast('Mesures acceptées'); },
+  'ar3-refuser': async () => { const d = courant(); await maj(d, { AR3_decision: 'Défavorable', Avis_final: 'AD' }, 'AR3_DECISION', 'Bascule en défavorable (mesures refusées ou absence de réponse)'); toast('Basculé en défavorable'); },
+  'envoye': async () => { const d = courant(), ar3Premier = d.Avis_final === 'AR3' && !d.AR3_date_notification;
+    await maj(d, ar3Premier ? { AR3_date_notification: aujourdhui() } : { Avis_date: aujourdhui(), Etat_interne: 'Avis émis' },
+      'ENVOI_AVIS', `${libelle(d.Avis_final)}${ar3Premier ? ' — demande de mesures (15 jours)' : ''} marqué envoyé`);
+    toast('Marqué comme envoyé'); },
+  'pdf': async () => { const d = courant();
+    await ecrire([journal(d, 'GENERATION_AVIS', `Courrier ${libelle(d.Avis_final)} généré (${nomFichier(d)})`)]);
+    const qui = await auteurDerniereAction(d, 'GENERATION_AVIS');
+    const maintenant = new Date().toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
+    pdf(d, `Généré par ${qui || 'agent inconnu'} le ${maintenant} — dossier ${d.dossier_number}`); },
+};
+
+// --- Événements ------------------------------------------------------------------------------
+document.getElementById('liste').addEventListener('click', e => { const it = e.target.closest('.item'); if (it) ouvrir(Number(it.dataset.id)); });
+document.getElementById('onglets').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { onglet = b.dataset.onglet; rendreListe(); } });
+document.getElementById('recherche').addEventListener('input', rendreListe);
+const detail = document.getElementById('detail');
+detail.addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b || b.disabled) return;
+  if (b.dataset.prop) { saisie.proposition = saisie.proposition === b.dataset.prop ? '' : b.dataset.prop; rendreDetail(); }
+  else if (b.dataset.dec) { saisie.decision = b.dataset.dec; rendreDetail(); }
+  else if (actions[b.id]) verrou(actions[b.id]);
+});
+detail.addEventListener('input', e => {
+  const id = e.target.id; if (id !== 'motivation' && id !== 'mesures') return;
+  saisie[id] = e.target.value; const pos = e.target.selectionStart; rendreDetail();
+  const t = document.getElementById(id); t.focus(); t.setSelectionRange(pos, pos);
+});
+
+async function demarrer() {
+  if (!DEMARCHE && !horsGrist) { detail.innerHTML = '<div class="vide">Ajoutez ?demarche=&lt;numéro&gt; à l\'URL du widget.</div>'; return; }
+  try { await charger(); } catch (e) { detail.innerHTML = `<div class="vide">Impossible de lire les tables : ${esc(e.message)}</div>`; return; }
+  const premier = data.dossiers.find(d => dansOnglet(d, onglet)) || data.dossiers[0];
+  if (premier && selection == null) return ouvrir(premier.id);
+  rendreListe(); rendreDetail();
+}
+
+// --- Données de démonstration (hors Grist uniquement, entièrement fictives) ----------------------
+function demo() {
+  const j = s => Date.UTC(...s.split('-').map((v, i) => i === 1 ? v - 1 : +v)) / 1000, auj = aujourdhui();
+  const base = (id, n, extra) => ({ id, dossier_number: String(n), Jours_restants: 40, Lien_dossier_DN: `Ouvrir https://demarche.numerique.gouv.fr/procedures/0/dossiers/${n}`,
+    PJ_identite_statut: 'Valide', PJ_cv_statut: 'Valide', PJ_mission_statut: 'Valide', PJ_financement_statut: 'Valide', ...extra });
+  const dossiers = [
+    base(1, 90000001, { Criblage_resultat: 'Inconnu', Jours_restants: 52 }),
+    base(2, 90000002, { Criblage_resultat: 'Connu', Proposition_instructeur: 'AD', Motivation_refus: 'Motivation fictive.', Etat_interne: 'Chez le décideur', Jours_restants: 20 }),
+    base(3, 90000003, { Criblage_resultat: 'Inconnu', Proposition_instructeur: 'AF', Avis_final: 'AF', Jours_restants: 33 }),
+    base(4, 90000004, { Criblage_resultat: 'Inconnu', Avis_final: 'AR3', AR3_date_notification: auj - 17 * 86400, Jours_restants: 25 }),
+    base(5, 90000005, { Criblage_resultat: 'Connu', Avis_final: 'AD', Avis_date: j('2026-09-01'), Echeance_recours: j('2026-11-01'), Jours_restants: 5 }),
+    base(6, 90000006, { Criblage_resultat: 'Différé', Jours_restants: 44 }),
+  ];
+  const noms = ['Tintin RÉPORTER', 'Rastapopoulos ROBERTO', 'Bianca CASTAFIORE', 'Tryphon TOURNESOL', 'Olivera ALLAN', 'Séraphin LAMPION'];
+  const champs = Object.fromEntries(dossiers.map((d, i) => { const [p, n] = noms[i].split(' ');
+    return [d.dossier_number, { prenom_s_du_beneficiaire: p, nom_de_naissance_du_beneficiaire: n, date_de_naissance_du_beneficiaire: j('1995-03-0' + (i + 1)),
+      quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr: 'Institut fictif du Belgistan', date_de_debut_de_la_mission_dans_la_zrr: j('2026-11-02'), date_de_fin_de_la_mission_dans_la_zrr: j('2027-04-30') }]; }));
+  const mod = (code, extra) => ({ Code: code, Intitule_courrier: '[intitulé fictif]', Introduction: '[introduction fictive]', Phrase_decision: '[phrase de décision fictive]', Avec_periode: true, Corps: '[texte fictif du niveau]', ...extra });
+  const modeles = Object.fromEntries(AVIS.map(a => [a.code, mod(a.code, a.code === 'AD' ? { Avec_periode: false } : a.code.startsWith('AR') ? { Avertissement: true } : {})]));
+  return { dossiers, champs, zrr: Object.fromEntries(dossiers.map(d => [d.dossier_number, ['00X0ZRR0']])), modeles,
+    params: { Titre: '[titre fictif]', Visas: '[visas fictifs]', Lieu: '[lieu]', Signataire: '[signataire fictif]', Texte_avertissement: '[avertissement fictif]' } };
+}
+
+if (horsGrist) { document.getElementById('demo').hidden = false; demarrer(); }
+else {
+  grist.ready({ requiredAccess: 'full' });
+  let premier = true;
+  grist.onRecords(() => { if (premier) { premier = false; demarrer(); } });
+  grist.onRecord(r => { if (r && r.id !== selection && data.dossiers.some(d => d.id === r.id)) ouvrir(r.id); });
+  setTimeout(() => { if (premier) { premier = false; demarrer(); } }, 1500);
+}
+</script>
+</body>
+</html>
