@@ -333,8 +333,9 @@ function pdf(d, filigrane) {
   const n = doc.getNumberOfPages();
   for (let i = 1; i <= n; i++) {  // filigrane nominatif sur chaque page
     doc.setPage(i); doc.saveGraphicsState(); doc.setGState(new doc.GState({ opacity: 0.12 }));
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(20); doc.setTextColor(0, 0, 145);
-    doc.text(filigrane, 105, 160, { align: 'center', angle: 35 }); doc.restoreGraphicsState(); doc.setTextColor(0, 0, 0);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(0, 0, 145);
+    filigrane.replace(' le ', '\nle ').split('\n').forEach((l, k) => doc.text(l, 38 + k * 6, 205 + k * 9, { angle: 35 }));  // 2 lignes, tient dans la page
+    doc.restoreGraphicsState(); doc.setTextColor(0, 0, 0);
   }
   doc.save(nomFichier(d));
 }
