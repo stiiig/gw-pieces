@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dossiers</title>
+<!-- Widget Grist : liste des dossiers (compteurs, filtres, recherche, attribution) et fiche détaillée (formulaire complet, cotations).
+     Paramètre d'URL requis : ?demarche=<numéro>. Accès complet requis. -->
+<script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
+<style>
+  :root { --bleu: #000091; --bleu-clair: #e3e3fd; --texte: #161616; --gris: #666; --bord: #ddd; --fond: #f6f6f6;
+          --vert: #18753c; --orange: #b34000; --orange-clair: #ffe9e6; --jaune: #d69a00; --jaune-clair: #feecc2; --rouge: #ce0500; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 Marianne, system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--texte); background: #fff; }
+  main { padding: 16px 20px 40px; }
+  h1 { font-size: 18px; margin: 0; color: var(--bleu); }
+  .haut { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+  .compteurs { display: flex; gap: 8px; flex-wrap: wrap; }
+  .compteur { border: 1px solid var(--bord); border-radius: 8px; padding: 6px 12px; min-width: 120px; cursor: pointer; background: #fff; text-align: left; font: inherit; }
+  .compteur b { display: block; font-size: 22px; color: var(--bleu); line-height: 1.1; }
+  .compteur span { font-size: 12px; color: var(--gris); }
+  .compteur.alerte b { color: var(--orange); }
+  .compteur.actif { border-color: var(--bleu); box-shadow: 0 0 0 1px var(--bleu); background: var(--bleu-clair); }
+  .outils { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  input[type=search], select { font: inherit; padding: 6px 9px; border: 1px solid var(--bord); border-radius: 4px; background: #fff; }
+  input[type=search] { min-width: 320px; }
+  a.bouton, button { font: inherit; border-radius: 4px; padding: 5px 11px; cursor: pointer; border: 1px solid var(--bleu); background: #fff; color: var(--bleu); text-decoration: none; display: inline-block; }
+  button.plein, a.plein { background: var(--bleu); color: #fff; }
+  button.filtre.actif { background: var(--bleu); color: #fff; }
+  .table { overflow: auto; border: 1px solid var(--bord); border-radius: 6px; max-height: calc(100vh - 190px); }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--bord); white-space: nowrap; }
+  th { background: var(--fond); color: var(--gris); font-weight: 600; position: sticky; top: 0; z-index: 1; }
+  tbody tr { cursor: pointer; } tbody tr:hover td { background: var(--bleu-clair); }
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11.5px; font-weight: 600; background: var(--bleu-clair); color: var(--bleu); }
+  .b-vert { background: #dff5e6; color: var(--vert); } .b-rouge { background: #ffe5e5; color: var(--rouge); } .b-jaune { background: var(--jaune-clair); color: #8a5a00; } .b-orange { background: var(--orange-clair); color: var(--orange); }
+  /* fiche */
+  .fiche-haut { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+  .fiche-haut h2 { margin: 4px 0 2px; font-size: 21px; }
+  .sous { color: var(--gris); }
+  .grille { display: grid; grid-template-columns: 1fr 300px; gap: 16px; margin-top: 14px; }
+  section { border: 1px solid var(--bord); border-radius: 8px; padding: 12px 16px; margin-bottom: 12px; }
+  section h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .03em; color: var(--bleu); margin: 0 0 8px; }
+  dl { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px 18px; margin: 0; }
+  dt { font-size: 11.5px; color: var(--gris); } dd { margin: 0 0 4px; font-weight: 500; overflow-wrap: anywhere; white-space: pre-wrap; }
+  dd.cotation { color: var(--rouge); font-weight: 700; }
+  .cote { border-left: 3px solid var(--bord); padding-left: 10px; margin-bottom: 10px; }
+  .cote b { display: block; font-size: 12px; color: var(--gris); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+  .vide { color: var(--gris); padding: 40px; text-align: center; }
+  .toast { position: fixed; bottom: 16px; right: 16px; background: var(--texte); color: #fff; padding: 8px 14px; border-radius: 4px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.on { opacity: 1; }
+  .demo { background: var(--jaune-clair); padding: 4px 10px; font-size: 12px; text-align: center; }
+</style>
+</head>
+<body>
+<div id="demo" class="demo" hidden>Mode démonstration hors Grist — données fictives</div>
+<main id="contenu"><div class="vide">Chargement…</div></main>
+<div id="toast" class="toast"></div>
+<script>
+const DEMARCHE = new URLSearchParams(location.search).get('demarche') || '';
+const T = { dossiers: `Demarche_${DEMARCHE}_dossiers`, champs: `Demarche_${DEMARCHE}_champs`, zrr: `Demarche_${DEMARCHE}_repetable_zrr_concernee_s`,
+            refZrr: 'ZRR', refPays: 'Referentiel_Pays', utilisateurs: 'Utilisateurs', journal: 'Journal' };
+const AVIS = { AF: 'Favorable', AF1: 'Favorable avec précautions', AR1: 'Réservé 1', AR2: 'Réservé 2', AR3: 'Réservé 3', AR4: 'Réservé 4', AD: 'Défavorable' };
+const PIECES = [['identite', "Pièce d'identité"], ['cv', 'CV'], ['mission', 'Mission'], ['financement', 'Financement']];
+
+let data = { dossiers: [], champs: {}, zrr: {}, refZrr: [], refPays: [], utilisateurs: [] };
+let vue = 'liste', selection = null, filtre = '', compteur = '', instructeur = '', recherche = '';
+const horsGrist = window.self === window.top;
+const lignes = t => (t.id || []).map((id, i) => { const o = { id }; for (const k in t) o[k] = t[k][i]; return o; });
+async function lire(nom, opt) { try { return lignes(await grist.docApi.fetchTable(nom)); } catch (e) { if (opt) return []; throw e; } }
+async function charger() {
+  if (horsGrist) { data = demo(); return; }
+  const [d, c, z, rz, rp, u] = await Promise.all([lire(T.dossiers), lire(T.champs), lire(T.zrr, true), lire(T.refZrr, true), lire(T.refPays, true), lire(T.utilisateurs, true)]);
+  data = { dossiers: d, champs: Object.fromEntries(c.map(x => [String(x.dossier_number), x])),
+    zrr: z.reduce((a, x) => ((a[String(x.dossier_number)] ||= []).push(x.numero_de_la_zrr), a), {}), refZrr: rz, refPays: rp, utilisateurs: u };
+}
+async function ecrire(actions) { if (horsGrist) { console.log('[démo]', actions); return; } await grist.docApi.applyUserActions(actions); }
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+const dateFr = v => { if (v == null || v === '') return ''; const d = typeof v === 'number' ? new Date(v * 1000) : new Date(v); return isNaN(d) ? String(v) : d.toLocaleDateString('fr-FR', { timeZone: 'UTC' }); };
+function toast(m) { const t = document.getElementById('toast'); t.textContent = m; t.classList.add('on'); setTimeout(() => t.classList.remove('on'), 2200); }
+const C = d => data.champs[String(d.dossier_number)] || {};
+const zrrDe = d => data.zrr[String(d.dossier_number)] || [];
+const nationalites = d => [C(d).nationalite_du_beneficiaire, C(d).autre_nationalite_du_beneficiaire].filter(n => n && !/^sans autre/i.test(n));
+const nomInstructeur = d => (data.utilisateurs.find(u => u.id === d.Attribue_a) || {}).Nom || '';
+const cotationPays = n => { const r = data.refPays.find(p => p.Pays === n || p.Nationalite === n); return r ? r.Cotation : null; };
+const cotationZrr = code => { const r = data.refZrr.find(z => z.Code === code); return r ? r.Cotation : null; };
+const tempsTraitement = d => d.Avis_date && d.Depot_dt ? Math.round((d.Avis_date - d.Depot_dt) / 86400) : null;
+
+// États déduits (aucune saisie supplémentaire)
+const enAttenteCorrection = d => !d.Avis_date && !!d.Message_correction_date && PIECES.some(([k]) => d[`PJ_${k}_statut`] === 'Non valide');
+const chezDecideur = d => !d.Avis_date && d.Etat_interne === 'Chez le décideur';
+const aTraiterInstructeur = d => !d.Avis_date && !chezDecideur(d) && !enAttenteCorrection(d);
+const risque = d => !d.Avis_date && d.Jours_restants != null && d.Jours_restants < 15;
+const COMPTEURS = [['instr', 'À traiter instructeurs', aTraiterInstructeur], ['decideur', 'À traiter décideur', chezDecideur],
+  ['correction', 'En attente de correction', enAttenteCorrection], ['risque', 'Risque de forclusion', risque, true]];
+const FILTRES = [['arad', 'Proposition réservé / défavorable', d => /^(AR|AD)/.test(d.Proposition_instructeur || '') && !d.Avis_date],
+  ['ar3', 'Décision réservé 3', d => d.Avis_final === 'AR3'], ['differe', 'Criblages différés', d => d.Criblage_resultat === 'Différé'],
+  ['correction', 'En attente de correction', enAttenteCorrection]];
+
+function etatBadge(d) {
+  if (d.Avis_date) return `<span class="badge ${d.Avis_final === 'AD' ? 'b-rouge' : 'b-vert'}">${esc(AVIS[d.Avis_final] || d.Avis_final)}</span>`;
+  if (enAttenteCorrection(d)) return '<span class="badge b-jaune">En attente de correction</span>';
+  if (chezDecideur(d)) return '<span class="badge">Chez le décideur</span>';
+  return '<span class="badge b-orange">À traiter</span>';
+}
+function rendreListe() {
+  const q = recherche.trim().toLowerCase();
+  const f = FILTRES.find(x => x[0] === filtre), cpt = COMPTEURS.find(x => x[0] === compteur);
+  const ds = data.dossiers.filter(d => (!f || f[2](d)) && (!cpt || cpt[2](d)) && (!instructeur || String(d.Attribue_a || '') === instructeur)
+    && (!q || [d.dossier_number, C(d).nom_de_naissance_du_beneficiaire, C(d).prenom_s_du_beneficiaire, ...nationalites(d),
+      C(d).quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr, ...zrrDe(d)].join(' ').toLowerCase().includes(q)))
+    .sort((a, b) => (a.Avis_date ? 1 : 0) - (b.Avis_date ? 1 : 0) || (a.Jours_restants ?? 1e9) - (b.Jours_restants ?? 1e9));
+  const instructeurs = data.utilisateurs.filter(u => u.Actif !== false);
+  document.getElementById('contenu').innerHTML = `
+    <div class="haut"><h1>Dossiers</h1><div class="compteurs">${COMPTEURS.map(([k, l, fn, al]) => { const n = data.dossiers.filter(fn).length;
+      return `<button class="compteur ${al && n ? 'alerte' : ''} ${compteur === k ? 'actif' : ''}" data-compteur="${k}"><b>${n}</b><span>${l}</span></button>`; }).join('')}</div></div>
+    <div class="outils">
+      <input type="search" id="recherche" placeholder="Rechercher : nom, nationalité, établissement, n° de ZRR…" value="${esc(recherche)}">
+      <select id="instructeur"><option value="">Tous les instructeurs</option>${instructeurs.map(u => `<option value="${u.id}" ${instructeur === String(u.id) ? 'selected' : ''}>${esc(u.Nom)}</option>`).join('')}</select>
+      ${FILTRES.map(([k, l]) => `<button class="filtre ${filtre === k ? 'actif' : ''}" data-filtre="${k}">${l}</button>`).join('')}
+      <span class="sous">${ds.length} dossier(s)</span>
+    </div>
+    <div class="table"><table><thead><tr><th>Reçu le</th><th>Instructeur</th><th>Établissement</th><th>N° de ZRR</th><th>Nom</th><th>Prénom</th><th>Né(e) le</th><th>Lieu de naissance</th>
+      <th>Pays de naissance</th><th>Nationalité</th><th>Poste</th><th>Début</th><th>Fin</th><th>Criblage</th><th>Proposition</th><th>Décision</th><th>Envoyé le</th><th>Traitement</th><th>État</th></tr></thead>
+    <tbody>${ds.map(d => { const c = C(d); return `<tr data-id="${d.id}">
+      <td>${dateFr(d.Depot_dt)}</td><td>${esc(nomInstructeur(d))}</td><td>${esc(c.quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr)}</td><td>${esc(zrrDe(d).join(', '))}</td>
+      <td>${esc(c.nom_de_naissance_du_beneficiaire)}</td><td>${esc(c.prenom_s_du_beneficiaire)}</td><td>${dateFr(c.date_de_naissance_du_beneficiaire)}</td><td>${esc(c.ville_de_naissance_du_beneficiaire)}</td>
+      <td>${esc(c.pays_de_naissance_du_beneficiaire)}</td><td>${esc(nationalites(d).join(', '))}</td><td>${esc(c.intitule_du_poste)}</td>
+      <td>${dateFr(c.date_de_debut_de_la_mission_dans_la_zrr)}</td><td>${dateFr(c.date_de_fin_de_la_mission_dans_la_zrr)}</td>
+      <td>${d.Criblage_resultat ? `<span class="badge ${d.Criblage_resultat === 'Inconnu' ? 'b-vert' : d.Criblage_resultat === 'Connu' ? 'b-rouge' : 'b-jaune'}">${esc(d.Criblage_resultat)}</span>` : d.Criblage_envoi_date ? 'envoyé le ' + dateFr(d.Criblage_envoi_date) : ''}</td>
+      <td>${esc(AVIS[d.Proposition_instructeur] || '')}</td><td>${esc(AVIS[d.Avis_final] || '')}</td><td>${dateFr(d.Avis_date)}</td>
+      <td>${tempsTraitement(d) != null ? tempsTraitement(d) + ' j' : d.Jours_restants != null ? `<span class="badge ${d.Jours_restants < 15 ? 'b-orange' : ''}">${d.Jours_restants} j restants</span>` : ''}</td>
+      <td>${etatBadge(d)}</td></tr>`; }).join('') || '<tr><td colspan="19" class="vide">Aucun dossier.</td></tr>'}</tbody></table></div>`;
+}
+
+// --- Fiche détaillée : tout le formulaire, par rubrique ------------------------------------
+const OUI = v => v === true ? 'Oui' : v === false ? 'Non' : v;
+const adresse = v => { try { const j = typeof v === 'string' && v.startsWith('{') ? JSON.parse(v) : null; return j ? (j.address?.label || j.label || v) : v; } catch (e) { return v; } };
+const RUBRIQUES = [
+  ['Établissement et ZRR', [['quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr', 'Établissement'], ['je_suis_un_etablissement_public_de_recherche', 'Établissement public de recherche', OUI],
+    ['nom_du_laboratoire', 'Laboratoire'], ['code_de_l_unite', "Code de l'unité"], ['nom_du_responsable_scientifique_de_stage', 'Responsable scientifique'],
+    ['nom_du_responsable_de_la_zrr', 'Responsable de la ZRR'], ['avis_motive_du_responsable_de_la_zrr', 'Avis du responsable de la ZRR']]],
+  ['Bénéficiaire', [['nom_de_naissance_du_beneficiaire', 'Nom de naissance'], ['nom_d_usage_du_beneficiaire', "Nom d'usage"], ['prenom_s_du_beneficiaire', 'Prénom(s)'],
+    ['genre_du_beneficiaire', 'Genre'], ['date_de_naissance_du_beneficiaire', 'Date de naissance', dateFr], ['ville_de_naissance_du_beneficiaire', 'Ville de naissance'],
+    ['pays_de_naissance_du_beneficiaire', 'Pays de naissance'], ['date_d_obtention_de_la_nationalite_francaise_par_le_beneficiaire_le_cas_echeant', "Nationalité française obtenue le", dateFr],
+    ['adresse_principale_actuelle_du_beneficiaire', 'Adresse actuelle', adresse], ['quel_est_le_type_de_piece_d_identite_du_beneficiaire', "Pièce d'identité"]]],
+  ['Situation professionnelle', [['quelle_est_la_situation_professionnelle_actuelle_du_beneficiaire', 'Situation'], ['organisme_employeur_actuel_du_beneficiaire', 'Employeur'],
+    ['nom_de_l_universite', 'Université'], ['adresse_de_l_organisme_employeur_actuel_du_beneficiaire', 'Adresse employeur'], ['ville_de_l_organisme_employeur_actuel_du_beneficiaire', 'Ville employeur'],
+    ['pays_de_l_organisme_employeur_actuel_du_beneficiaire', 'Pays employeur']]],
+  ['Mission', [['motif_de_la_demande', 'Motif de la demande'], ['quel_est_le_type_d_acces_souhaite', "Type d'accès"], ['quel_est_votre_statut_au_sein_de_la_zrr', 'Statut'],
+    ['date_de_debut_de_la_mission_dans_la_zrr', 'Début', dateFr], ['date_de_fin_de_la_mission_dans_la_zrr', 'Fin', dateFr], ['domaine_scientifique_principal', 'Domaine et discipline'],
+    ['intitule_du_poste', 'Intitulé du poste'], ['resume_de_la_mission_et_de_l_activite_sujet_theme_prevue_au_sein_de_la_zrr', 'Résumé de la mission'],
+    ['origine_du_financement_de_la_mission', 'Origine du financement'], ['type_de_financement', 'Type de financement'], ['montant_du_financement_en_euros', 'Montant (€)']]],
+  ['Habilitation et antécédents', [['avez_vous_une_habilitation_au_secret_de_la_defense_nationale', 'Habilitation au secret'], ['autorite_d_habilitation', "Autorité d'habilitation"],
+    ['date_d_expiration_de_l_habilitation', "Expiration de l'habilitation", dateFr], ['avez_vous_deja_recu_une_autorisation_d_acces_a_une_zrr', 'Autorisation ZRR antérieure'],
+    ['numero_de_la_zrr_concernee', 'N° de ZRR (antérieure)'], ['reference_ou_annee_de_l_autorisation', "Référence ou année de l'autorisation"]]],
+  ['Affiliations avec des organisations étrangères', [['affiliation_dates_organisme_et_nationalite_separes_par_une_virgule', 'Affiliations']]],
+  ['Pièces jointes', [['justificatif_d_identite', "Pièce d'identité"], ['cv_du_beneficiaire', 'CV'], ['descriptif_detaille_de_la_mission', 'Descriptif de la mission'],
+    ['les_documents_relatifs_au_financement', 'Documents de financement']]],
+];
+function rendreFiche() {
+  const d = data.dossiers.find(x => x.id === selection); if (!d) { vue = 'liste'; return rendreListe(); }
+  const c = C(d), cotZ = zrrDe(d).map(z => [z, cotationZrr(z)]), nats = nationalites(d);
+  const champ = ([k, l, f]) => { const v = c[k]; const s = f ? f(v) : v; return s === '' || s == null ? '' : `<div><dt>${esc(l)}</dt><dd>${esc(s)}</dd></div>`; };
+  const statut = s => s ? `<span class="badge ${s === 'Valide' ? 'b-vert' : s === 'Non valide' ? 'b-rouge' : 'b-jaune'}">${esc(s === 'Partiel' ? 'Validation partielle' : s)}</span>` : '<span class="sous">non contrôlée</span>';
+  document.getElementById('contenu').innerHTML = `
+    <button id="retour">← Tous les dossiers</button>
+    <div class="fiche-haut"><div><h2>${esc([c.prenom_s_du_beneficiaire, c.nom_de_naissance_du_beneficiaire].filter(Boolean).join(' '))}</h2>
+      <div class="sous">Dossier n° ${esc(d.dossier_number)} · reçu le ${dateFr(d.Depot_dt)} · ${etatBadge(d)} ${d.label_names ? '· ' + esc(d.label_names) : ''}</div></div>
+      <div>${d.Lien_pieces_DN ? `<a class="bouton plein" target="_blank" rel="noopener" href="${esc(d.Lien_pieces_DN.split(' ').pop())}">Pièces dans DN</a> ` : ''}${d.Lien_dossier_DN ? `<a class="bouton" target="_blank" rel="noopener" href="${esc(d.Lien_dossier_DN.split(' ').pop())}">Dossier dans DN</a>` : ''}</div></div>
+    <div class="grille"><div>
+      <section><h3>Cotations de risque</h3><dl>
+        ${cotZ.map(([z, v]) => `<div><dt>ZRR ${esc(z)}</dt><dd class="cotation">${v ?? 'non référencée'}</dd></div>`).join('') || '<div><dt>ZRR</dt><dd>—</dd></div>'}
+        ${nats.map((n, i) => `<div><dt>Nationalité ${i + 1} : ${esc(n)}</dt><dd class="cotation">${cotationPays(n) ?? 'non référencée'}</dd></div>`).join('')}
+      </dl></section>
+      ${RUBRIQUES.map(([t, cs]) => { const h = cs.map(champ).join(''); return h ? `<section><h3>${esc(t)}</h3><dl>${h}</dl></section>` : ''; }).join('')}
+    </div><div>
+      <section><h3>Instructeur</h3><select id="attribution" style="width:100%"><option value="">— non attribué —</option>
+        ${data.utilisateurs.filter(u => u.Actif !== false).map(u => `<option value="${u.id}" ${d.Attribue_a === u.id ? 'selected' : ''}>${esc(u.Nom)}${u.Role ? ' (' + esc(u.Role) + ')' : ''}</option>`).join('')}</select></section>
+      <section><h3>Pièces</h3>${PIECES.map(([k, l]) => `<div class="cote"><b>${l}</b>${statut(d[`PJ_${k}_statut`])}</div>`).join('')}
+        ${d.Message_correction_date ? `<div class="sous">Demande de correction envoyée le ${dateFr(d.Message_correction_date)}</div>` : ''}</section>
+      <section><h3>Criblage</h3><div class="cote"><b>Envoi</b>${dateFr(d.Criblage_envoi_date) || '—'} ${d.Criblage_lot ? '· ' + esc(d.Criblage_lot) : ''}</div>
+        <div class="cote"><b>Réponse</b>${d.Criblage_resultat ? esc(d.Criblage_resultat) + ' · ' + dateFr(d.Criblage_retour_date) : '—'}</div></section>
+      <section><h3>Avis</h3><div class="cote"><b>Proposition</b>${esc(AVIS[d.Proposition_instructeur] || '—')}</div>
+        ${d.Motivation_refus ? `<div class="cote"><b>Motivation</b>${esc(d.Motivation_refus)}</div>` : ''}
+        <div class="cote"><b>Décision</b>${esc(AVIS[d.Avis_final] || '—')}</div><div class="cote"><b>Envoyé le</b>${dateFr(d.Avis_date) || '—'}</div></section>
+    </div></div>`;
+}
+function rendre() { vue === 'fiche' ? rendreFiche() : rendreListe(); }
+
+document.body.addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (b?.dataset.compteur) { compteur = compteur === b.dataset.compteur ? '' : b.dataset.compteur; rendre(); return; }
+  if (b?.dataset.filtre) { filtre = filtre === b.dataset.filtre ? '' : b.dataset.filtre; rendre(); return; }
+  if (b?.id === 'retour') { vue = 'liste'; rendre(); return; }
+  const tr = e.target.closest('tr[data-id]'); if (tr) { selection = Number(tr.dataset.id); vue = 'fiche'; rendre(); window.scrollTo(0, 0); }
+});
+document.body.addEventListener('input', e => { if (e.target.id === 'recherche') { recherche = e.target.value; const p = e.target.selectionStart; rendre(); const r = document.getElementById('recherche'); r.focus(); r.setSelectionRange(p, p); } });
+document.body.addEventListener('change', async e => {
+  if (e.target.id === 'instructeur') { instructeur = e.target.value; rendre(); }
+  if (e.target.id === 'attribution') {
+    const d = data.dossiers.find(x => x.id === selection), v = e.target.value ? Number(e.target.value) : null;
+    try {
+      await ecrire([['UpdateRecord', T.dossiers, d.id, { Attribue_a: v }],
+        ['AddRecord', T.journal, null, { Horodatage: Date.now() / 1000, Utilisateur: 'Widget dossiers', Action: 'ATTRIBUTION', Dossier: String(d.dossier_number),
+          Detail: `Attribué à ${(data.utilisateurs.find(u => u.id === v) || {}).Nom || 'personne'}` }]]);
+      d.Attribue_a = v; toast('Attribution enregistrée');
+    } catch (err) { toast('Erreur : ' + err.message); rendre(); }
+  }
+});
+
+async function demarrer() {
+  if (!DEMARCHE && !horsGrist) { document.getElementById('contenu').innerHTML = '<div class="vide">Ajoutez ?demarche=&lt;numéro&gt; à l\'URL du widget.</div>'; return; }
+  try { await charger(); } catch (e) { document.getElementById('contenu').innerHTML = `<div class="vide">Impossible de lire les tables : ${esc(e.message)}</div>`; return; }
+  rendre();
+}
+function demo() {  // entièrement fictif
+  const auj = Math.floor(Date.now() / 86400000) * 86400;
+  const dossiers = [
+    { id: 1, dossier_number: '90000001', Depot_dt: auj - 10 * 86400, Jours_restants: 50, Attribue_a: 1 },
+    { id: 2, dossier_number: '90000002', Depot_dt: auj - 50 * 86400, Jours_restants: 10, Etat_interne: 'Chez le décideur', Proposition_instructeur: 'AD', Criblage_resultat: 'Connu' },
+    { id: 3, dossier_number: '90000003', Depot_dt: auj - 20 * 86400, Jours_restants: 40, PJ_cv_statut: 'Non valide', Message_correction_date: auj - 3 * 86400, Attribue_a: 2 },
+  ];
+  const champs = { '90000001': { prenom_s_du_beneficiaire: 'Tintin', nom_de_naissance_du_beneficiaire: 'RÉPORTER', nationalite_du_beneficiaire: 'Syldavie', quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr: 'Institut fictif' },
+    '90000002': { prenom_s_du_beneficiaire: 'Bianca', nom_de_naissance_du_beneficiaire: 'CASTAFIORE', nationalite_du_beneficiaire: 'Bordurie', autre_nationalite_du_beneficiaire: 'Syldavie' },
+    '90000003': { prenom_s_du_beneficiaire: 'Tryphon', nom_de_naissance_du_beneficiaire: 'TOURNESOL', nationalite_du_beneficiaire: 'Belgistan' } };
+  return { dossiers, champs, zrr: { '90000001': ['00X0ZRR0'] }, refZrr: [{ Code: '00X0ZRR0', Cotation: 3 }], refPays: [{ Pays: 'Syldavie', Cotation: 2 }, { Pays: 'Bordurie', Cotation: 5 }],
+    utilisateurs: [{ id: 1, Nom: 'Agent fictif 1', Role: 'Instructeur' }, { id: 2, Nom: 'Agent fictif 2', Role: 'Instructeur' }] };
+}
+if (horsGrist) { document.getElementById('demo').hidden = false; demarrer(); }
+else { grist.ready({ requiredAccess: 'full' }); let p = true; grist.onRecords(() => { if (p) { p = false; demarrer(); } }); setTimeout(() => { if (p) { p = false; demarrer(); } }, 1500); }
+</script>
+</body>
+</html>
