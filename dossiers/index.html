@@ -181,7 +181,7 @@ function rendreFiche() {
       <section><h3>Pièces</h3>${PIECES.map(([k, l]) => `<div class="cote"><b>${l}</b>${statut(d[`PJ_${k}_statut`])}</div>`).join('')}
         ${d.Message_correction_date ? `<div class="sous">Demande de correction envoyée le ${dateFr(d.Message_correction_date)}</div>` : ''}</section>
       <section><h3>Criblage</h3><div class="cote"><b>Envoi</b>${dateFr(d.Criblage_envoi_date) || '—'} ${d.Criblage_lot ? '· ' + esc(d.Criblage_lot) : ''}</div>
-        <div class="cote"><b>Réponse</b>${d.Criblage_resultat ? esc(d.Criblage_resultat) + ' · ' + dateFr(d.Criblage_retour_date) : '—'}</div></section>
+        <div class="cote"><b>Réponse</b>${d.Criblage_resultat ? esc(d.Criblage_resultat) + (d.Criblage_retour_date ? ' · ' + dateFr(d.Criblage_retour_date) : '') : '—'}</div></section>
       <section><h3>Avis</h3><div class="cote"><b>Proposition</b>${esc(AVIS[d.Proposition_instructeur] || '—')}</div>
         ${d.Motivation_refus ? `<div class="cote"><b>Motivation</b>${esc(d.Motivation_refus)}</div>` : ''}
         <div class="cote"><b>Décision</b>${esc(AVIS[d.Avis_final] || '—')}</div><div class="cote"><b>Envoyé le</b>${dateFr(d.Avis_date) || '—'}</div></section>
