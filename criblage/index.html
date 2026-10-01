@@ -59,7 +59,8 @@ const COLONNES_CSV = [
   ['N° dossier', (d, c) => d.dossier_number], ['Nom', (d, c) => c.nom_de_naissance_du_beneficiaire],
   ['Prénom', (d, c) => c.prenom_s_du_beneficiaire], ['Date de naissance', (d, c) => dateFr(c.date_de_naissance_du_beneficiaire)],
   ['Lieu de naissance', (d, c) => c.ville_de_naissance_du_beneficiaire], ['Pays de naissance', (d, c) => c.pays_de_naissance_du_beneficiaire],
-  ['Nationalité', (d, c) => c.nationalite_du_beneficiaire],
+  ['Nationalités', (d, c) => [c.nationalite_du_beneficiaire, c.autre_nationalite_du_beneficiaire]   // toutes les nationalités déclarées
+    .filter(n => n && !/^sans autre/i.test(n)).join(', ')],
 ];
 const ONGLETS = [['envoyer', 'À cribler'], ['cours', 'Lots en cours'], ['differes', 'Différés'], ['faits', 'Criblés']];
 
@@ -134,9 +135,17 @@ function vueListe(k) {
 }
 
 // --- Actions ---------------------------------------------------------------------------------
+// Format attendu par le logiciel de chiffrement (modèle reçu le 01/10) : pas de ligne d'en-tête,
+// séparateur « ; », fins de ligne CRLF, encodage Windows-1252.
 function csv(ds) {
-  const cell = v => { const s = String(v ?? ''); return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-  return '﻿' + [COLONNES_CSV.map(x => x[0]), ...ds.map(d => COLONNES_CSV.map(([, f]) => f(d, c(d))))].map(l => l.map(cell).join(';')).join('\r\n');
+  const cell = v => String(v ?? '').replace(/[;\r\n]+/g, ' ').trim();
+  return ds.map(d => COLONNES_CSV.map(([, f]) => cell(f(d, c(d)))).join(';') + '\r\n').join('');
+}
+const CP1252 = { 0x20ac: 0x80, 0x201a: 0x82, 0x0192: 0x83, 0x201e: 0x84, 0x2026: 0x85, 0x2020: 0x86, 0x2021: 0x87, 0x02c6: 0x88, 0x2030: 0x89, 0x0160: 0x8a,
+  0x2039: 0x8b, 0x0152: 0x8c, 0x017d: 0x8e, 0x2018: 0x91, 0x2019: 0x92, 0x201c: 0x93, 0x201d: 0x94, 0x2022: 0x95, 0x2013: 0x96, 0x2014: 0x97, 0x02dc: 0x98,
+  0x2122: 0x99, 0x0161: 0x9a, 0x203a: 0x9b, 0x0153: 0x9c, 0x017e: 0x9e, 0x0178: 0x9f };
+function windows1252(texte) {  // caractère hors du jeu Windows-1252 → « ? »
+  return Uint8Array.from([...texte].map(ch => { const u = ch.codePointAt(0); return u < 0x80 || (u >= 0xa0 && u <= 0xff) ? u : CP1252[u] ?? 0x3f; }));
 }
 function telecharger(nomFichier, contenu, type) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([contenu], { type })); a.download = nomFichier; a.click();
@@ -145,7 +154,7 @@ async function exporter() {
   const ds = data.dossiers.filter(d => choisis.has(d.id)), maintenant = new Date(), p = n => String(n).padStart(2, '0');
   const fichier = `${maintenant.getFullYear()}_${p(maintenant.getMonth() + 1)}_${p(maintenant.getDate())}_demande_criblage.CSV`;
   const lot = `Lot du ${maintenant.toLocaleDateString('fr-FR')} à ${p(maintenant.getHours())}h${p(maintenant.getMinutes())}`;
-  telecharger(fichier, csv(ds), 'text/csv;charset=utf-8');
+  telecharger(fichier, windows1252(csv(ds)), 'text/csv;charset=windows-1252');
   const champs = { Criblage_envoi_date: aujourdhui(), Criblage_lot: lot };
   await ecrire([['BulkUpdateRecord', T.dossiers, ds.map(d => d.id), Object.fromEntries(Object.entries(champs).map(([k, v]) => [k, ds.map(() => v)]))],
     journal('EXPORT_CRIBLAGE', `${lot} : ${ds.length} dossier(s) — ${fichier}`)]);
