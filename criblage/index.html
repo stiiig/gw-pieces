@@ -67,10 +67,19 @@ const ONGLETS = [['envoyer', 'À cribler'], ['cours', 'Lots en cours'], ['differ
 let data = { dossiers: [], champs: {} }, onglet = 'envoyer', choisis = new Set(), enCours = false, saisies = {};
 const horsGrist = window.self === window.top;
 const lignes = t => (t.id || []).map((id, i) => { const o = { id }; for (const k in t) o[k] = t[k][i]; return o; });
+// Corrections de l'agent (table Corrections, ajout seul) : la dernière valeur saisie pour un (dossier, champ)
+// remplace celle du formulaire ; dates corrigées au format AAAA-MM-JJ.
+function corriger(champs, corrections) {
+  const par = {};
+  for (const r of [...corrections].sort((a, b) => a.id - b.id)) (par[String(r.Dossier)] ||= {})[r.Champ] = r;
+  return champs.map(c => { const cs = par[String(c.dossier_number)]; if (!cs) return c; const o = { ...c };
+    for (const [k, r] of Object.entries(cs)) o[k] = /^date_/.test(k) ? (r.Valeur_corrigee ? Date.parse(r.Valeur_corrigee) / 1000 : null) : r.Valeur_corrigee;
+    return o; });
+}
 async function charger() {
   if (horsGrist) { data = demo(); return; }
-  const [d, c] = await Promise.all([grist.docApi.fetchTable(T.dossiers), grist.docApi.fetchTable(T.champs)]);
-  data = { dossiers: lignes(d), champs: Object.fromEntries(lignes(c).map(x => [String(x.dossier_number), x])) };
+  const [d, c, k] = await Promise.all([grist.docApi.fetchTable(T.dossiers), grist.docApi.fetchTable(T.champs), grist.docApi.fetchTable('Corrections').catch(() => ({}))]);
+  data = { dossiers: lignes(d), champs: Object.fromEntries(corriger(lignes(c), lignes(k)).map(x => [String(x.dossier_number), x])) };
 }
 async function ecrire(actions) { if (horsGrist) { console.log('[démo]', actions); return; } await grist.docApi.applyUserActions(actions); }
 const journal = (action, detail, dossier) => ['AddRecord', T.journal, null, { Horodatage: Date.now() / 1000, Utilisateur: 'Widget criblage', Action: action, Dossier: dossier || '', Detail: detail }];

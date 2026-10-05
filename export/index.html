@@ -84,15 +84,24 @@ function valeur(col, v) {
   if (col.id === 'Avis_final' || col.id === 'Proposition_instructeur') return AVIS[v] || v;
   return String(v);
 }
+// Corrections de l'agent (table Corrections, ajout seul) : la dernière valeur saisie pour un (dossier, champ)
+// remplace celle du formulaire ; dates corrigées au format AAAA-MM-JJ.
+function corriger(champs, corrections) {
+  const par = {};
+  for (const r of [...corrections].sort((a, b) => a.id - b.id)) (par[String(r.Dossier)] ||= {})[r.Champ] = r;
+  return champs.map(c => { const cs = par[String(c.dossier_number)]; if (!cs) return c; const o = { ...c };
+    for (const [k, r] of Object.entries(cs)) o[k] = /^date_/.test(k) ? (r.Valeur_corrigee ? Date.parse(r.Valeur_corrigee) / 1000 : null) : r.Valeur_corrigee;
+    return o; });
+}
 async function charger() {
   if (horsGrist) return demo();
-  const [d, c, tables, cols] = await Promise.all([grist.docApi.fetchTable(T.dossiers), grist.docApi.fetchTable(T.champs),
-    grist.docApi.fetchTable('_grist_Tables'), grist.docApi.fetchTable('_grist_Tables_column')]);
+  const [d, c, tables, cols, k] = await Promise.all([grist.docApi.fetchTable(T.dossiers), grist.docApi.fetchTable(T.champs),
+    grist.docApi.fetchTable('_grist_Tables'), grist.docApi.fetchTable('_grist_Tables_column'), grist.docApi.fetchTable('Corrections').catch(() => ({}))]);
   const refTable = Object.fromEntries(lignes(tables).map(t => [t.tableId, t.id]));
   const meta = lignes(cols);
   const desc = (tableId, groupe) => meta.filter(m => m.parentId === refTable[tableId] && !TECHNIQUES.test(m.colId))
     .map(m => ({ id: m.colId, label: LIBELLES[m.colId] || (m.label !== m.colId && m.label) || m.colId, type: m.type || 'Any', groupe }));
-  const champs = Object.fromEntries(lignes(c).map(x => [String(x.dossier_number), x]));
+  const champs = Object.fromEntries(corriger(lignes(c), lignes(k)).map(x => [String(x.dossier_number), x]));
   const vuD = new Set();
   colonnes = [...desc(T.dossiers, 'Dossier'), ...desc(T.champs, 'Formulaire').filter(x => x.id !== 'dossier_number')]
     .filter(x => !vuD.has(x.id) && vuD.add(x.id));

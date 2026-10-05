@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dossiers</title>
-<!-- Widget Grist : liste des dossiers (compteurs, filtres, recherche, attribution) et fiche détaillée (formulaire complet, cotations).
+<!-- Widget Grist : liste des dossiers (compteurs, filtres, recherche, attribution) et fiche détaillée (formulaire complet, cotations,
+     correction d'une donnée par l'agent : table Corrections en ajout seul, valeur d'origine conservée et affichée).
      Paramètre d'URL requis : ?demarche=<numéro>. Accès complet requis. -->
 <script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
 <style>
@@ -50,6 +51,10 @@
   .toast { position: fixed; bottom: 16px; right: 16px; background: var(--texte); color: #fff; padding: 8px 14px; border-radius: 4px; opacity: 0; transition: opacity .2s; pointer-events: none; }
   .toast.on { opacity: 1; }
   .demo { background: var(--jaune-clair); padding: 4px 10px; font-size: 12px; text-align: center; }
+  button.crayon { border: none; padding: 0 4px; color: var(--gris); background: none; font-size: 13px; }
+  button.crayon:hover { color: var(--bleu); }
+  dd.corrige { color: var(--bleu); } .origine { display: block; font-size: 11.5px; font-weight: 400; color: var(--gris); }
+  .edition input { font: inherit; padding: 4px 7px; border: 1px solid var(--bleu); border-radius: 4px; width: 100%; margin-bottom: 4px; }
 </style>
 </head>
 <body>
@@ -59,20 +64,32 @@
 <script>
 const DEMARCHE = new URLSearchParams(location.search).get('demarche') || '';
 const T = { dossiers: `Demarche_${DEMARCHE}_dossiers`, champs: `Demarche_${DEMARCHE}_champs`, zrr: `Demarche_${DEMARCHE}_repetable_zrr_concernee_s`,
-            refZrr: 'ZRR', refPays: 'Referentiel_Pays', utilisateurs: 'Utilisateurs', journal: 'Journal' };
+            refZrr: 'ZRR', refPays: 'Referentiel_Pays', utilisateurs: 'Utilisateurs', journal: 'Journal', corrections: 'Corrections' };
 const AVIS = { AF: 'Favorable', AF1: 'Favorable avec précautions', AR1: 'Réservé 1', AR2: 'Réservé 2', AR3: 'Réservé 3', AR4: 'Réservé 4', AD: 'Défavorable' };
 const PIECES = [['identite', "Pièce d'identité"], ['cv', 'CV'], ['mission', 'Mission'], ['financement', 'Financement']];
 
 let data = { dossiers: [], champs: {}, zrr: {}, refZrr: [], refPays: [], utilisateurs: [] };
-let vue = 'liste', selection = null, filtre = '', compteur = '', instructeur = '', recherche = '';
+let vue = 'liste', selection = null, filtre = '', compteur = '', instructeur = '', recherche = '', edition = null, enCours = false;
 const horsGrist = window.self === window.top;
 const lignes = t => (t.id || []).map((id, i) => { const o = { id }; for (const k in t) o[k] = t[k][i]; return o; });
 async function lire(nom, opt) { try { return lignes(await grist.docApi.fetchTable(nom)); } catch (e) { if (opt) return []; throw e; } }
 async function charger() {
   if (horsGrist) { data = demo(); return; }
-  const [d, c, z, rz, rp, u] = await Promise.all([lire(T.dossiers), lire(T.champs), lire(T.zrr, true), lire(T.refZrr, true), lire(T.refPays, true), lire(T.utilisateurs, true)]);
-  data = { dossiers: d, champs: Object.fromEntries(c.map(x => [String(x.dossier_number), x])),
+  const [d, c, z, rz, rp, u, k] = await Promise.all([lire(T.dossiers), lire(T.champs), lire(T.zrr, true), lire(T.refZrr, true), lire(T.refPays, true), lire(T.utilisateurs, true), lire(T.corrections, true)]);
+  data = { dossiers: d, champs: Object.fromEntries(corriger(c, k).map(x => [String(x.dossier_number), x])),
     zrr: z.reduce((a, x) => ((a[String(x.dossier_number)] ||= []).push(x.numero_de_la_zrr), a), {}), refZrr: rz, refPays: rp, utilisateurs: u };
+}
+// Corrections de l'agent : la dernière ligne de Corrections pour un (dossier, champ) remplace la valeur du formulaire ;
+// la valeur d'origine reste dans la table synchronisée et dans _origine. Dates corrigées au format AAAA-MM-JJ.
+const estDate = k => /^date_/.test(k);
+const iso = v => v == null || v === '' ? '' : new Date(v * 1000).toISOString().slice(0, 10);
+function corriger(champs, corrections) {
+  const par = {};
+  for (const r of [...corrections].sort((a, b) => a.id - b.id)) (par[String(r.Dossier)] ||= {})[r.Champ] = r;
+  return champs.map(c => { const cs = par[String(c.dossier_number)]; if (!cs) return c;
+    const o = { ...c, _origine: {}, _corrections: cs };
+    for (const [k, r] of Object.entries(cs)) { o._origine[k] = c[k]; o[k] = estDate(k) ? (r.Valeur_corrigee ? Date.parse(r.Valeur_corrigee) / 1000 : null) : r.Valeur_corrigee; }
+    return o; });
 }
 async function ecrire(actions) { if (horsGrist) { console.log('[démo]', actions); return; } await grist.docApi.applyUserActions(actions); }
 
@@ -143,7 +160,8 @@ const RUBRIQUES = [
     ['nom_du_responsable_de_la_zrr', 'Responsable de la ZRR'], ['avis_motive_du_responsable_de_la_zrr', 'Avis du responsable de la ZRR']]],
   ['Bénéficiaire', [['nom_de_naissance_du_beneficiaire', 'Nom de naissance'], ['nom_d_usage_du_beneficiaire', "Nom d'usage"], ['prenom_s_du_beneficiaire', 'Prénom(s)'],
     ['genre_du_beneficiaire', 'Genre'], ['date_de_naissance_du_beneficiaire', 'Date de naissance', dateFr], ['ville_de_naissance_du_beneficiaire', 'Ville de naissance'],
-    ['pays_de_naissance_du_beneficiaire', 'Pays de naissance'], ['date_d_obtention_de_la_nationalite_francaise_par_le_beneficiaire_le_cas_echeant', "Nationalité française obtenue le", dateFr],
+    ['pays_de_naissance_du_beneficiaire', 'Pays de naissance'], ['nationalite_du_beneficiaire', 'Nationalité'], ['autre_nationalite_du_beneficiaire', 'Autre nationalité'],
+    ['date_d_obtention_de_la_nationalite_francaise_par_le_beneficiaire_le_cas_echeant', "Nationalité française obtenue le", dateFr],
     ['adresse_principale_actuelle_du_beneficiaire', 'Adresse actuelle', adresse], ['quel_est_le_type_de_piece_d_identite_du_beneficiaire', "Pièce d'identité"]]],
   ['Situation professionnelle', [['quelle_est_la_situation_professionnelle_actuelle_du_beneficiaire', 'Situation'], ['organisme_employeur_actuel_du_beneficiaire', 'Employeur'],
     ['nom_de_l_universite', 'Université'], ['adresse_de_l_organisme_employeur_actuel_du_beneficiaire', 'Adresse employeur'], ['ville_de_l_organisme_employeur_actuel_du_beneficiaire', 'Ville employeur'],
@@ -162,7 +180,13 @@ const RUBRIQUES = [
 function rendreFiche() {
   const d = data.dossiers.find(x => x.id === selection); if (!d) { vue = 'liste'; return rendreListe(); }
   const c = C(d), cotZ = zrrDe(d).map(z => [z, cotationZrr(z)]), nats = nationalites(d);
-  const champ = ([k, l, f]) => { const v = c[k]; const s = f ? f(v) : v; return s === '' || s == null ? '' : `<div><dt>${esc(l)}</dt><dd>${esc(s)}</dd></div>`; };
+  const champ = ([k, l, f], modifiable) => {
+    const v = c[k], s = f ? f(v) : v, corr = c._corrections?.[k];
+    if (edition === k) return `<div class="edition"><dt>${esc(l)}</dt><dd><input id="valeur-corrigee" type="${estDate(k) ? 'date' : 'text'}" value="${esc(estDate(k) ? iso(v) : v ?? '')}"><button class="plein" id="corr-ok" ${enCours ? 'disabled' : ''}>Enregistrer la correction</button> <button id="corr-annuler">Annuler</button></dd></div>`;
+    if ((s === '' || s == null) && !(modifiable && corr)) return modifiable ? `<div><dt>${esc(l)}</dt><dd class="sous">— <button class="crayon" data-corriger="${k}" title="Corriger">✎</button></dd></div>` : '';
+    const o = corr ? (f ? f(c._origine[k]) : c._origine[k]) : null;
+    return `<div><dt>${esc(l)}${corr ? ' <span class="badge b-jaune">corrigé</span>' : ''}</dt><dd class="${corr ? 'corrige' : ''}">${esc(s === '' || s == null ? '—' : s)}${modifiable ? ` <button class="crayon" data-corriger="${k}" title="Corriger">✎</button>` : ''}${corr ? `<span class="origine">Saisi par le déposant : ${esc(o === '' || o == null ? '(vide)' : o)} · corrigé par ${esc(corr.Auteur_nom || corr.Auteur || '')} le ${dateFr(corr.Horodatage)}</span>` : ''}</dd></div>`; };
+  const modifiable = (t, [k, , f]) => t !== 'Pièces jointes' && f !== OUI && f !== adresse && k !== 'montant_du_financement_en_euros';
   const statut = s => s ? `<span class="badge ${s === 'Valide' ? 'b-vert' : s === 'Non valide' ? 'b-rouge' : 'b-jaune'}">${esc(s === 'Partiel' ? 'Validation partielle' : s)}</span>` : '<span class="sous">non contrôlée</span>';
   document.getElementById('contenu').innerHTML = `
     <button id="retour">← Tous les dossiers</button>
@@ -174,7 +198,7 @@ function rendreFiche() {
         ${cotZ.map(([z, v]) => `<div><dt>ZRR ${esc(z)}</dt><dd class="cotation">${v ?? 'non référencée'}</dd></div>`).join('') || '<div><dt>ZRR</dt><dd>—</dd></div>'}
         ${nats.map((n, i) => `<div><dt>Nationalité ${i + 1} : ${esc(n)}</dt><dd class="cotation">${cotationPays(n) ?? 'non référencée'}</dd></div>`).join('')}
       </dl></section>
-      ${RUBRIQUES.map(([t, cs]) => { const h = cs.map(champ).join(''); return h ? `<section><h3>${esc(t)}</h3><dl>${h}</dl></section>` : ''; }).join('')}
+      ${RUBRIQUES.map(([t, cs]) => { const h = cs.map(x => champ(x, modifiable(t, x))).join(''); return h ? `<section><h3>${esc(t)}</h3><dl>${h}</dl></section>` : ''; }).join('')}
     </div><div>
       <section><h3>Instructeur</h3><select id="attribution" style="width:100%"><option value="">— non attribué —</option>
         ${data.utilisateurs.filter(u => u.Actif !== false).map(u => `<option value="${u.id}" ${d.Attribue_a === u.id ? 'selected' : ''}>${esc(u.Nom)}${u.Role ? ' (' + esc(u.Role) + ')' : ''}</option>`).join('')}</select></section>
@@ -193,9 +217,13 @@ document.body.addEventListener('click', e => {
   const b = e.target.closest('button');
   if (b?.dataset.compteur) { compteur = compteur === b.dataset.compteur ? '' : b.dataset.compteur; rendre(); return; }
   if (b?.dataset.filtre) { filtre = filtre === b.dataset.filtre ? '' : b.dataset.filtre; rendre(); return; }
-  if (b?.id === 'retour') { vue = 'liste'; rendre(); return; }
+  if (b?.id === 'retour') { vue = 'liste'; edition = null; rendre(); return; }
+  if (b?.dataset.corriger) { edition = b.dataset.corriger; rendre(); document.getElementById('valeur-corrigee')?.focus(); return; }
+  if (b?.id === 'corr-annuler') { edition = null; rendre(); return; }
+  if (b?.id === 'corr-ok') { enregistrerCorrection(); return; }
   const tr = e.target.closest('tr[data-id]'); if (tr) { selection = Number(tr.dataset.id); vue = 'fiche'; rendre(); window.scrollTo(0, 0); }
 });
+document.body.addEventListener('keydown', e => { if (e.target.id === 'valeur-corrigee' && e.key === 'Enter') enregistrerCorrection(); if (e.target.id === 'valeur-corrigee' && e.key === 'Escape') { edition = null; rendre(); } });
 document.body.addEventListener('input', e => { if (e.target.id === 'recherche') { recherche = e.target.value; const p = e.target.selectionStart; rendre(); const r = document.getElementById('recherche'); r.focus(); r.setSelectionRange(p, p); } });
 document.body.addEventListener('change', async e => {
   if (e.target.id === 'instructeur') { instructeur = e.target.value; rendre(); }
@@ -210,6 +238,26 @@ document.body.addEventListener('change', async e => {
   }
 });
 
+async function enregistrerCorrection() {
+  const d = data.dossiers.find(x => x.id === selection), c = C(d), k = edition;
+  const libelle = RUBRIQUES.flatMap(([, cs]) => cs).find(x => x[0] === k)[1];
+  const brut = document.getElementById('valeur-corrigee').value.trim();
+  const origine = c._origine && k in c._origine ? c._origine[k] : c[k];
+  const texte = v => estDate(k) ? iso(v) : String(v ?? '');
+  const avant = texte(c[k]);
+  if (brut === avant) { edition = null; rendre(); return; }
+  if (enCours) return; enCours = true; rendre();
+  try {
+    const maintenant = Date.now() / 1000;
+    await ecrire([['AddRecord', T.corrections, null, { Horodatage: maintenant, Dossier: String(d.dossier_number), Champ: k, Libelle: libelle,
+        Valeur_origine: texte(origine), Valeur_corrigee: brut }],
+      ['AddRecord', T.journal, null, { Horodatage: maintenant, Utilisateur: 'Widget dossiers', Action: 'CORRECTION_DONNEE', Dossier: String(d.dossier_number),
+        Detail: `${libelle} : « ${avant || '(vide)'} » → « ${brut || '(vide)'} » (saisi par le déposant : « ${texte(origine) || '(vide)'} »)` }]]);
+    edition = null; await charger(); toast('Correction enregistrée');
+  } catch (err) { toast('Erreur : ' + err.message); }
+  enCours = false; rendre();
+}
+
 async function demarrer() {
   if (!DEMARCHE && !horsGrist) { document.getElementById('contenu').innerHTML = '<div class="vide">Ajoutez ?demarche=&lt;numéro&gt; à l\'URL du widget.</div>'; return; }
   try { await charger(); } catch (e) { document.getElementById('contenu').innerHTML = `<div class="vide">Impossible de lire les tables : ${esc(e.message)}</div>`; return; }
@@ -222,9 +270,11 @@ function demo() {  // entièrement fictif
     { id: 2, dossier_number: '90000002', Depot_dt: auj - 50 * 86400, Jours_restants: 10, Etat_interne: 'Chez le décideur', Proposition_instructeur: 'AD', Criblage_resultat: 'Connu' },
     { id: 3, dossier_number: '90000003', Depot_dt: auj - 20 * 86400, Jours_restants: 40, PJ_cv_statut: 'Non valide', Message_correction_date: auj - 3 * 86400, Attribue_a: 2 },
   ];
-  const champs = { '90000001': { prenom_s_du_beneficiaire: 'Tintin', nom_de_naissance_du_beneficiaire: 'RÉPORTER', nationalite_du_beneficiaire: 'Syldavie', quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr: 'Institut fictif' },
+  const brut = { '90000001': { prenom_s_du_beneficiaire: 'Tintin', nom_de_naissance_du_beneficiaire: 'RÉPORTER', date_de_naissance_du_beneficiaire: Date.UTC(1929, 0, 10) / 1000, nationalite_du_beneficiaire: 'Syldavie', quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr: 'Institut fictif' },
     '90000002': { prenom_s_du_beneficiaire: 'Bianca', nom_de_naissance_du_beneficiaire: 'CASTAFIORE', nationalite_du_beneficiaire: 'Bordurie', autre_nationalite_du_beneficiaire: 'Syldavie' },
     '90000003': { prenom_s_du_beneficiaire: 'Tryphon', nom_de_naissance_du_beneficiaire: 'TOURNESOL', nationalite_du_beneficiaire: 'Belgistan' } };
+  const corrections = [{ id: 1, Dossier: '90000001', Champ: 'date_de_naissance_du_beneficiaire', Valeur_corrigee: '1929-01-11', Auteur_nom: 'Agent fictif 1', Horodatage: auj }];
+  const champs = Object.fromEntries(corriger(Object.entries(brut).map(([n, c]) => ({ dossier_number: n, ...c })), corrections).map(c => [c.dossier_number, c]));
   return { dossiers, champs, zrr: { '90000001': ['00X0ZRR0'] }, refZrr: [{ Code: '00X0ZRR0', Cotation: 3 }], refPays: [{ Pays: 'Syldavie', Cotation: 2 }, { Pays: 'Bordurie', Cotation: 5 }],
     utilisateurs: [{ id: 1, Nom: 'Agent fictif 1', Role: 'Instructeur' }, { id: 2, Nom: 'Agent fictif 2', Role: 'Instructeur' }] };
 }

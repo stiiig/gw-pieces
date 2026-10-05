@@ -132,13 +132,22 @@ async function lire(nom, optionnelle) {
   try { return lignes(await grist.docApi.fetchTable(nom)); }
   catch (e) { if (optionnelle) return []; throw e; }
 }
+// Corrections de l'agent (table Corrections, ajout seul) : la dernière valeur saisie pour un (dossier, champ)
+// remplace celle du formulaire ; dates corrigées au format AAAA-MM-JJ.
+function corriger(champs, corrections) {
+  const par = {};
+  for (const r of [...corrections].sort((a, b) => a.id - b.id)) (par[String(r.Dossier)] ||= {})[r.Champ] = r;
+  return champs.map(c => { const cs = par[String(c.dossier_number)]; if (!cs) return c; const o = { ...c };
+    for (const [k, r] of Object.entries(cs)) o[k] = /^date_/.test(k) ? (r.Valeur_corrigee ? Date.parse(r.Valeur_corrigee) / 1000 : null) : r.Valeur_corrigee;
+    return o; });
+}
 async function charger() {
   if (horsGrist) { data = demo(); return; }
-  const [dossiers, champs, zrr, regles, motifs] = await Promise.all([
-    lire(T.dossiers), lire(T.champs), lire(T.zrr, true), lire(T.regles, true), lire(T.motifs, true)]);
+  const [dossiers, champs, zrr, regles, motifs, corrections] = await Promise.all([
+    lire(T.dossiers), lire(T.champs), lire(T.zrr, true), lire(T.regles, true), lire(T.motifs, true), lire('Corrections', true)]);
   data = {
     dossiers,
-    champs: Object.fromEntries(champs.map(c => [String(c.dossier_number), c])),
+    champs: Object.fromEntries(corriger(champs, corrections).map(c => [String(c.dossier_number), c])),
     zrr: zrr.reduce((acc, z) => ((acc[String(z.dossier_number)] ||= []).push(z.numero_de_la_zrr), acc), {}),
     regles: regles.sort((a, b) => (a.Numero || 0) - (b.Numero || 0)),
     motifs: motifs.sort((a, b) => (a.Ordre || 0) - (b.Ordre || 0)),
