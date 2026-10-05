@@ -108,8 +108,9 @@ const T = {
 const PIECES = [
   { cle: 'identite', libelle: "Pièce d'identité", col: 'justificatif_d_identite', partielle: true, regle: 'Identité' },
   { cle: 'cv', libelle: 'CV', col: 'cv_du_beneficiaire', nature: true, regle: 'CV' },
-  { cle: 'mission', libelle: 'Descriptif de la mission', col: 'descriptif_detaille_de_la_mission', nature: true, regle: 'Mission' },
-  { cle: 'financement', libelle: 'Documents de financement', col: 'les_documents_relatifs_au_financement', regle: 'Financement' },
+  // Mission et financement : compléments facultatifs (pièces non obligatoires) — contrôlés seulement s'ils sont fournis
+  { cle: 'mission', libelle: 'Descriptif de la mission', col: 'descriptif_detaille_de_la_mission', facultative: true, regle: 'Mission' },
+  { cle: 'financement', libelle: 'Documents de financement', col: 'les_documents_relatifs_au_financement', facultative: true, regle: 'Financement' },
 ];
 const LIBELLE_STATUT = { 'Valide': 'Valide', 'Partiel': 'Validation partielle', 'Non valide': 'Non valide' };
 
@@ -156,7 +157,8 @@ const aujourdhui = () => { const d = new Date(); return Date.UTC(d.getFullYear()
 const lienUrl = v => (v || '').split(' ').pop();
 const statutDe = (d, p) => d[`PJ_${p.cle}_statut`] || '';
 const classe = s => s === 'Non valide' ? 'Non' : s;
-const aControler = d => PIECES.some(p => !statutDe(d, p));
+const fournie = (d, p) => !!(data.champs[String(d.dossier_number)] || {})[p.col];
+const aControler = d => PIECES.some(p => !statutDe(d, p) && (!p.facultative || fournie(d, p)));
 // Demande de nouvelle pièce envoyée, pièce toujours non valide : on attend la correction du déposant
 const enAttenteCorrection = d => !d.Avis_date && !!d.Message_correction_date && PIECES.some(p => statutDe(d, p) === 'Non valide');
 function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('on'); setTimeout(() => t.classList.remove('on'), 2200); }
@@ -244,8 +246,8 @@ function rendreDetail() {
         : (b.statut === 'Non valide' && p.nature) ? "Obligatoire : cochez un motif ou précisez la nature de l'erreur." : '';
       const proposes = b.statut && b.statut !== 'Valide' ? motifsPour(p, b.statut) : [];
       return `<div class="piece ${classe(b.statut)}">
-        <div class="titre"><b>${esc(p.libelle)}</b></div>
-        <div class="fichier">${c[p.col] ? '📎 ' + esc(c[p.col]) : 'Aucun fichier déposé'}</div>
+        <div class="titre"><b>${esc(p.libelle)}</b>${p.facultative ? '<span class="uc">complément facultatif</span>' : ''}</div>
+        <div class="fichier">${c[p.col] ? '📎 ' + esc(c[p.col]) : p.facultative ? 'Non fourni (facultatif)' : 'Aucun fichier déposé'}</div>
         <div class="choix">${options.map(s => `<button data-piece="${p.cle}" data-statut="${s}" class="${b.statut === s ? 'sel-' + classe(s) : ''}">${LIBELLE_STATUT[s]}</button>`).join('')}</div>
         ${proposes.length ? `<div class="motifs">${proposes.map(m => `<label class="regle"><input type="checkbox" data-motif="${m.id}" data-pour="${p.cle}" ${b.motifs.includes(m.id) ? 'checked' : ''}> <span>${esc(m.Libelle)}</span></label>`).join('')}</div>` : ''}
         ${b.statut && b.statut !== 'Valide' || b.commentaire ? `<textarea rows="2" data-com="${p.cle}" class="${manque.includes(p.cle) ? 'manque' : ''}" placeholder="${proposes.length ? 'Autre motif / précision' : 'Motif / précision'}">${esc(b.commentaire)}</textarea>
