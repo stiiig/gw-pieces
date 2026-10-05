@@ -67,6 +67,8 @@
   .lettre .champ { font-weight: 700; }
   .lettre .manque { background: var(--jaune-clair); padding: 0 4px; font-style: italic; }
   .lettre .avert { font-weight: 700; margin-top: 16px; }
+  .lettre mark { background: #fff3a0; padding: 0 2px; }
+  .lettre .legende { font: 12px system-ui, sans-serif; color: var(--gris); margin: -12px 0 14px; }
   .filigrane { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
   .filigrane span { transform: rotate(-35deg); font: 700 22px system-ui, sans-serif; color: rgba(0,0,145,.10); white-space: nowrap; }
   .toast { position: fixed; bottom: 16px; right: 16px; background: var(--texte); color: #fff; padding: 8px 14px; border-radius: 4px; opacity: 0; transition: opacity .2s; pointer-events: none; }
@@ -291,7 +293,7 @@ function courrier(d) {
     ['intitule', '☒ ' + (m.Intitule_courrier || libelle(d.Avis_final))],
     ['p', m.Introduction || ''],
     ['champ', 'Courrier (message) en date du : ', null, 'date de recevabilité — définition attendue'],
-    ['champ', 'Numéro de référence de la demande : ', String(d.dossier_number)],
+    ['champ', '[[Numéro de référence de la demande : ]]', '[[' + d.dossier_number + ']]'],
     ['p', P.Visas || ''],
     ['p', m.Phrase_decision || ''],
     ['champ', 'Nom : ', b.nom], ['champ', 'Prénom(s) : ', b.prenoms], ['champ', 'Né(e) le : ', dateFr(c.date_de_naissance_du_beneficiaire)],
@@ -300,16 +302,21 @@ function courrier(d) {
   if (m.Avec_periode) blocs.push(['champ', "Période d'accès en ZRR : ", `du ${dateFr(c.date_de_debut_de_la_mission_dans_la_zrr) || '—'} au ${dateFr(c.date_de_fin_de_la_mission_dans_la_zrr) || '—'}`]);
   if (!['AF', 'AD'].includes(d.Avis_final) && m.Corps) blocs.push(['p', m.Corps]);
   if (d.Avis_final === 'AR3' && d.AR3_mesures) blocs.push(['p', "Mesures proposées par l'établissement : " + d.AR3_mesures]);
-  blocs.push(['p', `Le ${dateFr(date)} à ${P.Lieu || ''}`], ['p', 'Signature numérique :'], ['p', [P.Signataire, P.Fonction, P.Service].filter(Boolean).join('\n')]);
+  blocs.push(['p', `Le [[${dateFr(date)}]] à ${P.Lieu || ''}`], ['p', '[[Signature numérique :]]'], ['p', [P.Signataire, P.Fonction, P.Service].filter(Boolean).join('\n')]);
   if (m.Avertissement && P.Texte_avertissement) blocs.push(['avert', P.Texte_avertissement]);
   return blocs;
 }
+// [[…]] dans un texte = formulation à confirmer par le métier : surlignée à l'écran, texte simple dans le PDF
+const surligne = s => esc(s).replace(/\[\[([\s\S]*?)\]\]/g, '<mark title="Formulation à confirmer">$1</mark>');
+const sansMarques = s => String(s ?? '').replace(/\[\[|\]\]/g, '');
 function courrierHtml(d, filigrane) {
-  return courrier(d).map(([t, a, v, manque]) =>
-    t === 'titre' ? `<h4>${esc(a)}</h4>` : t === 'intitule' ? `<div class="intitule">${esc(a)}</div>`
-    : t === 'avert' ? `<p class="avert">${esc(a)}</p>`
-    : t === 'champ' ? `<p>${esc(a)}${v ? `<span class="champ">${esc(v)}</span>` : `<span class="manque">${esc(manque || 'à compléter')}</span>`}</p>`
-    : `<p>${esc(a)}</p>`).join('') + `<div class="filigrane"><span>${esc(filigrane)}</span></div>`;
+  const corps = courrier(d).map(([t, a, v, manque]) =>
+    t === 'titre' ? `<h4>${surligne(a)}</h4>` : t === 'intitule' ? `<div class="intitule">${surligne(a)}</div>`
+    : t === 'avert' ? `<p class="avert">${surligne(a)}</p>`
+    : t === 'champ' ? `<p>${surligne(a)}${v ? `<span class="champ">${surligne(v)}</span>` : `<span class="manque">${esc(manque || 'à compléter')}</span>`}</p>`
+    : `<p>${surligne(a)}</p>`).join('');
+  const aConfirmer = corps.includes('<mark') ? '<p class="legende"><mark>Surligné</mark> : formulation à confirmer par le métier.</p>' : '';
+  return aConfirmer + corps + `<div class="filigrane"><span>${esc(filigrane)}</span></div>`;
 }
 function nomFichier(d) {
   const t = { AF: 'Favorable', AF1: 'Favorable', AD: 'Défavorable' }[d.Avis_final] || 'Reserve_' + d.Avis_final;
@@ -323,7 +330,8 @@ function pdf(d, filigrane) {
     for (const l of doc.splitTextToSize(txt, L)) { if (y > 275) { doc.addPage(); y = 24; } doc.text(l, opts.centre ? 105 : X, y, { align: opts.centre ? 'center' : 'left' }); y += (opts.taille || 11) * 0.45; }
     y += 2.5;
   };
-  for (const [t, a, v, manque] of courrier(d)) {
+  for (const [t, a0, v0, manque] of courrier(d)) {
+    const a = sansMarques(a0), v = v0 == null ? v0 : sansMarques(v0);
     if (t === 'titre') ligne(a, { gras: true, centre: true, taille: 13 });
     else if (t === 'intitule') ligne(a.replace('☒ ', ''), { gras: true });  // ☒ absent des polices PDF standard
     else if (t === 'avert') ligne(a, { gras: true });
