@@ -93,6 +93,8 @@
 
 <script>
 const DEMARCHE = new URLSearchParams(location.search).get('demarche') || '';
+// ?criblage=non : circuit sans criblage (campagne de test) — l'avis favorable n'attend pas le retour « Inconnu ».
+const SANS_CRIBLAGE = new URLSearchParams(location.search).get('criblage') === 'non';
 const T = {
   dossiers: `Demarche_${DEMARCHE}_dossiers`, champs: `Demarche_${DEMARCHE}_champs`,
   zrr: `Demarche_${DEMARCHE}_repetable_zrr_concernee_s`,
@@ -217,7 +219,7 @@ function ouvrir(id) {
   rendreListe(); rendreDetail();
 }
 function etatDossier(d) {
-  const crib = d.Criblage_resultat || 'pas encore revenu';
+  const crib = SANS_CRIBLAGE ? 'hors circuit' : d.Criblage_resultat || 'pas encore revenu';
   const pieces = PIECES.map(([k, l]) => `${l} : ${d[`PJ_${k}_statut`] || '—'}`).join(' · ');
   return `<dl class="etat">
     <div><dt>Pièces</dt><dd style="font-weight:500">${esc(pieces)}</dd></div>
@@ -232,7 +234,7 @@ function rendreDetail() {
   if (!d) { el.innerHTML = '<div class="vide">Sélectionnez un dossier dans la liste.</div>'; return; }
   const b = beneficiaire(d), e = etape(d);
   let corps = '';
-  if (d.Criblage_resultat === 'Différé' && !d.Avis_date) corps = `<div class="bloquant">Criblage en position différée : aucun avis ne peut partir tant que le retour n'est pas arrivé.</div>`;
+  if (!SANS_CRIBLAGE && d.Criblage_resultat === 'Différé' && !d.Avis_date) corps = `<div class="bloquant">Criblage en position différée : aucun avis ne peut partir tant que le retour n'est pas arrivé.</div>`;
   else if (e === 'proposer') corps = blocProposer(d);
   else if (e === 'decideur') corps = blocDecideur(d);
   else if (e === 'ar3') corps = blocAR3(d);
@@ -247,7 +249,7 @@ function rendreDetail() {
 }
 function blocProposer(d) {
   const crib = d.Criblage_resultat;
-  const favOk = crib === 'Inconnu';
+  const favOk = SANS_CRIBLAGE || crib === 'Inconnu';
   const p = saisie.proposition, estAD = p === 'AD', versDecideur = p && !AVIS.find(a => a.code === p).favorable;
   const manque = estAD && !saisie.motivation.trim();
   return `<div class="etape"><h3>1. Proposer un avis</h3><div class="qui">Instructeur</div>
