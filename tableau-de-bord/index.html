@@ -2,11 +2,12 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tableau de bord</title>
 <!-- Widget Grist : indicateurs de délai, volumes et avis, avec filtres. Paramètre d'URL requis : ?demarche=<numéro>. Accès complet requis (lecture de deux tables). -->
-<script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="../lib/grist-plugin-api.js"></script>
+<script src="../lib/chart.umd.min.js"></script>
 <style>
   :root { --bleu: #000091; --bleu-clair: #e3e3fd; --texte: #161616; --gris: #666; --bord: #ddd; --fond: #f6f6f6; --orange: #b34000; --jaune-clair: #feecc2; }
   * { box-sizing: border-box; }

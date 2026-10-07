@@ -2,10 +2,11 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Validation des pièces</title>
 <!-- Widget Grist : contrôle des pièces jointes d'un dossier. Paramètre d'URL requis : ?demarche=<numéro>. Accès complet requis. -->
-<script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
+<script src="lib/grist-plugin-api.js"></script>
 <style>
   :root {
     --bleu: #000091; --bleu-clair: #e3e3fd; --texte: #161616; --gris: #666; --bord: #ddd; --fond: #f6f6f6;
