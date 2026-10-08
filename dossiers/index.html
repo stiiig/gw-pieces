@@ -52,8 +52,8 @@
   .toast { position: fixed; bottom: 16px; right: 16px; background: var(--texte); color: #fff; padding: 8px 14px; border-radius: 4px; opacity: 0; transition: opacity .2s; pointer-events: none; }
   .toast.on { opacity: 1; }
   .demo { background: var(--jaune-clair); padding: 4px 10px; font-size: 12px; text-align: center; }
-  button.crayon { border: none; padding: 0 4px; color: var(--gris); background: none; font-size: 13px; }
-  button.crayon:hover { color: var(--bleu); }
+  .bandeau-correction { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--jaune-clair); border: 1px solid var(--jaune); border-radius: 8px; padding: 10px 14px; margin-top: 12px; }
+  .bandeau-correction span { flex: 1; min-width: 260px; }
   dd.corrige { color: var(--bleu); } .origine { display: block; font-size: 11.5px; font-weight: 400; color: var(--gris); }
   .edition input { font: inherit; padding: 4px 7px; border: 1px solid var(--bleu); border-radius: 4px; width: 100%; margin-bottom: 4px; }
 </style>
@@ -70,7 +70,7 @@ const AVIS = { AF: 'Favorable', AF1: 'Favorable avec précautions', AR1: 'Réser
 const PIECES = [['identite', "Pièce d'identité"], ['cv', 'CV'], ['mission', 'Mission'], ['financement', 'Financement']];
 
 let data = { dossiers: [], champs: {}, zrr: {}, refZrr: [], refPays: [], utilisateurs: [] };
-let vue = 'liste', selection = null, filtre = '', compteur = '', instructeur = '', recherche = '', edition = null, enCours = false;
+let vue = 'liste', selection = null, filtre = '', compteur = '', instructeur = '', recherche = '', modeCorrection = false, enCours = false;
 const horsGrist = window.self === window.top;
 const lignes = t => (t.id || []).map((id, i) => { const o = { id }; for (const k in t) o[k] = t[k][i]; return o; });
 async function lire(nom, opt) { try { return lignes(await grist.docApi.fetchTable(nom)); } catch (e) { if (opt) return []; throw e; } }
@@ -181,19 +181,23 @@ const RUBRIQUES = [
 function rendreFiche() {
   const d = data.dossiers.find(x => x.id === selection); if (!d) { vue = 'liste'; return rendreListe(); }
   const c = C(d), cotZ = zrrDe(d).map(z => [z, cotationZrr(z)]), nats = nationalites(d);
+  const nCorr = Object.keys(c._corrections || {}).length;
   const champ = ([k, l, f], modifiable) => {
-    const v = c[k], s = f ? f(v) : v, corr = c._corrections?.[k];
-    if (edition === k) return `<div class="edition"><dt>${esc(l)}</dt><dd><input id="valeur-corrigee" type="${estDate(k) ? 'date' : 'text'}" value="${esc(estDate(k) ? iso(v) : v ?? '')}"><button class="plein" id="corr-ok" ${enCours ? 'disabled' : ''}>Enregistrer la correction</button> <button id="corr-annuler">Annuler</button></dd></div>`;
-    if ((s === '' || s == null) && !(modifiable && corr)) return modifiable ? `<div><dt>${esc(l)}</dt><dd class="sous">— <button class="crayon" data-corriger="${k}" title="Corriger">✎</button></dd></div>` : '';
+    const v = c[k], s = f ? f(v) : v, corr = c._corrections?.[k], vide = s === '' || s == null;
+    const badge = corr ? ' <span class="badge b-jaune">corrigé</span>' : '';
+    if (modeCorrection && modifiable) return `<div class="edition"><dt>${esc(l)}${badge}</dt><dd><input data-champ="${k}" type="${estDate(k) ? 'date' : 'text'}" value="${esc(estDate(k) ? iso(v) : v ?? '')}"></dd></div>`;
+    if (vide && !corr) return '';
     const o = corr ? (f ? f(c._origine[k]) : c._origine[k]) : null;
-    return `<div><dt>${esc(l)}${corr ? ' <span class="badge b-jaune">corrigé</span>' : ''}</dt><dd class="${corr ? 'corrige' : ''}">${esc(s === '' || s == null ? '—' : s)}${modifiable ? ` <button class="crayon" data-corriger="${k}" title="Corriger">✎</button>` : ''}${corr ? `<span class="origine">Saisi par le déposant : ${esc(o === '' || o == null ? '(vide)' : o)} · corrigé par ${esc(corr.Auteur_nom || corr.Auteur || '')} le ${dateFr(corr.Horodatage)}</span>` : ''}</dd></div>`; };
+    return `<div><dt>${esc(l)}${badge}</dt><dd class="${corr ? 'corrige' : ''}">${esc(vide ? '—' : s)}${corr ? `<span class="origine">Saisi par le déposant : ${esc(o === '' || o == null ? '(vide)' : o)} · corrigé par ${esc(corr.Auteur_nom || corr.Auteur || '')} le ${dateFr(corr.Horodatage)}</span>` : ''}</dd></div>`; };
   const modifiable = (t, [k, , f]) => t !== 'Pièces jointes' && f !== OUI && f !== adresse && k !== 'montant_du_financement_en_euros';
   const statut = s => s ? `<span class="badge ${s === 'Valide' ? 'b-vert' : s === 'Non valide' ? 'b-rouge' : 'b-jaune'}">${esc(s === 'Partiel' ? 'Validation partielle' : s)}</span>` : '<span class="sous">non contrôlée</span>';
   document.getElementById('contenu').innerHTML = `
     <button id="retour">← Tous les dossiers</button>
     <div class="fiche-haut"><div><h2>${esc([c.prenom_s_du_beneficiaire, c.nom_de_naissance_du_beneficiaire].filter(Boolean).join(' '))}</h2>
-      <div class="sous">Dossier n° ${esc(d.dossier_number)} · reçu le ${dateFr(d.Depot_dt)} · ${etatBadge(d)} ${d.label_names ? '· ' + esc(d.label_names) : ''}</div></div>
-      <div>${d.Lien_pieces_DN ? `<a class="bouton plein" target="_blank" rel="noopener" href="${esc(d.Lien_pieces_DN.split(' ').pop())}">Pièces dans DN</a> ` : ''}${d.Lien_dossier_DN ? `<a class="bouton" target="_blank" rel="noopener" href="${esc(d.Lien_dossier_DN.split(' ').pop())}">Dossier dans DN</a>` : ''}</div></div>
+      <div class="sous">Dossier n° ${esc(d.dossier_number)} · reçu le ${dateFr(d.Depot_dt)} · ${etatBadge(d)} ${d.label_names ? '· ' + esc(d.label_names) : ''}${nCorr ? ` · <span class="badge b-jaune">${nCorr} donnée${nCorr > 1 ? 's' : ''} corrigée${nCorr > 1 ? 's' : ''}</span>` : ''}</div></div>
+      <div>${modeCorrection ? '' : '<button id="mode-correction">✎ Corriger des données</button> '}${d.Lien_pieces_DN ? `<a class="bouton plein" target="_blank" rel="noopener" href="${esc(d.Lien_pieces_DN.split(' ').pop())}">Pièces dans DN</a> ` : ''}${d.Lien_dossier_DN ? `<a class="bouton" target="_blank" rel="noopener" href="${esc(d.Lien_dossier_DN.split(' ').pop())}">Dossier dans DN</a>` : ''}</div></div>
+    ${modeCorrection ? `<div class="bandeau-correction"><span><b>Mode correction</b> : modifiez les champs voulus. La saisie du déposant est conservée et chaque correction est inscrite au journal.</span>
+      <button class="plein" id="corr-ok" ${enCours ? 'disabled' : ''}>Enregistrer les corrections</button><button id="corr-annuler">Annuler</button></div>` : ''}
     <div class="grille"><div>
       <section><h3>Cotations de risque</h3><dl>
         ${cotZ.map(([z, v]) => `<div><dt>ZRR ${esc(z)}</dt><dd class="cotation">${v ?? 'non référencée'}</dd></div>`).join('') || '<div><dt>ZRR</dt><dd>—</dd></div>'}
@@ -218,13 +222,13 @@ document.body.addEventListener('click', e => {
   const b = e.target.closest('button');
   if (b?.dataset.compteur) { compteur = compteur === b.dataset.compteur ? '' : b.dataset.compteur; rendre(); return; }
   if (b?.dataset.filtre) { filtre = filtre === b.dataset.filtre ? '' : b.dataset.filtre; rendre(); return; }
-  if (b?.id === 'retour') { vue = 'liste'; edition = null; rendre(); return; }
-  if (b?.dataset.corriger) { edition = b.dataset.corriger; rendre(); document.getElementById('valeur-corrigee')?.focus(); return; }
-  if (b?.id === 'corr-annuler') { edition = null; rendre(); return; }
-  if (b?.id === 'corr-ok') { enregistrerCorrection(); return; }
+  if (b?.id === 'retour') { vue = 'liste'; modeCorrection = false; rendre(); return; }
+  if (b?.id === 'mode-correction') { modeCorrection = true; rendre(); return; }
+  if (b?.id === 'corr-annuler') { modeCorrection = false; rendre(); return; }
+  if (b?.id === 'corr-ok') { enregistrerCorrections(); return; }
   const tr = e.target.closest('tr[data-id]'); if (tr) { selection = Number(tr.dataset.id); vue = 'fiche'; rendre(); window.scrollTo(0, 0); }
 });
-document.body.addEventListener('keydown', e => { if (e.target.id === 'valeur-corrigee' && e.key === 'Enter') enregistrerCorrection(); if (e.target.id === 'valeur-corrigee' && e.key === 'Escape') { edition = null; rendre(); } });
+document.body.addEventListener('keydown', e => { if (e.target.dataset?.champ && e.key === 'Enter') enregistrerCorrections(); if (modeCorrection && e.key === 'Escape') { modeCorrection = false; rendre(); } });
 document.body.addEventListener('input', e => { if (e.target.id === 'recherche') { recherche = e.target.value; const p = e.target.selectionStart; rendre(); const r = document.getElementById('recherche'); r.focus(); r.setSelectionRange(p, p); } });
 document.body.addEventListener('change', async e => {
   if (e.target.id === 'instructeur') { instructeur = e.target.value; rendre(); }
@@ -239,22 +243,26 @@ document.body.addEventListener('change', async e => {
   }
 });
 
-async function enregistrerCorrection() {
-  const d = data.dossiers.find(x => x.id === selection), c = C(d), k = edition;
-  const libelle = RUBRIQUES.flatMap(([, cs]) => cs).find(x => x[0] === k)[1];
-  const brut = document.getElementById('valeur-corrigee').value.trim();
-  const origine = c._origine && k in c._origine ? c._origine[k] : c[k];
-  const texte = v => estDate(k) ? iso(v) : String(v ?? '');
-  const avant = texte(c[k]);
-  if (brut === avant) { edition = null; rendre(); return; }
-  if (enCours) return; enCours = true; rendre();
+async function enregistrerCorrections() {
+  if (enCours) return;
+  const d = data.dossiers.find(x => x.id === selection), c = C(d), n = String(d.dossier_number);
+  const libelles = Object.fromEntries(RUBRIQUES.flatMap(([, cs]) => cs).map(x => [x[0], x[1]]));
+  const texte = (k, v) => estDate(k) ? iso(v) : String(v ?? '');
+  const maintenant = Date.now() / 1000, actions = [];
+  document.querySelectorAll('input[data-champ]').forEach(i => {
+    const k = i.dataset.champ, brut = i.value.trim(), avant = texte(k, c[k]);
+    if (brut === avant) return;
+    const origine = texte(k, c._origine && k in c._origine ? c._origine[k] : c[k]);
+    actions.push(['AddRecord', T.corrections, null, { Horodatage: maintenant, Dossier: n, Champ: k, Libelle: libelles[k], Valeur_origine: origine, Valeur_corrigee: brut }],
+      ['AddRecord', T.journal, null, { Horodatage: maintenant, Utilisateur: 'Widget dossiers', Action: 'CORRECTION_DONNEE', Dossier: n,
+        Detail: `${libelles[k]} : « ${avant || '(vide)'} » → « ${brut || '(vide)'} » (saisi par le déposant : « ${origine || '(vide)'} »)` }]);
+  });
+  if (!actions.length) { modeCorrection = false; rendre(); toast('Aucune modification'); return; }
+  enCours = true; rendre();
   try {
-    const maintenant = Date.now() / 1000;
-    await ecrire([['AddRecord', T.corrections, null, { Horodatage: maintenant, Dossier: String(d.dossier_number), Champ: k, Libelle: libelle,
-        Valeur_origine: texte(origine), Valeur_corrigee: brut }],
-      ['AddRecord', T.journal, null, { Horodatage: maintenant, Utilisateur: 'Widget dossiers', Action: 'CORRECTION_DONNEE', Dossier: String(d.dossier_number),
-        Detail: `${libelle} : « ${avant || '(vide)'} » → « ${brut || '(vide)'} » (saisi par le déposant : « ${texte(origine) || '(vide)'} »)` }]]);
-    edition = null; await charger(); toast('Correction enregistrée');
+    await ecrire(actions);
+    modeCorrection = false; await charger();
+    toast(actions.length / 2 > 1 ? `${actions.length / 2} corrections enregistrées` : 'Correction enregistrée');
   } catch (err) { toast('Erreur : ' + err.message); }
   enCours = false; rendre();
 }
