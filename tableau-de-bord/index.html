@@ -58,8 +58,8 @@
 <script>
 const DEMARCHE = new URLSearchParams(location.search).get('demarche') || '';
 const T = { dossiers: `Demarche_${DEMARCHE}_dossiers`, champs: `Demarche_${DEMARCHE}_champs` };
-const AVIS = { AF: 'Favorable', AF1: 'Favorable avec précautions', AR1: 'Réservé — niveau 1', AR2: 'Réservé — niveau 2', AR3: 'Réservé — niveau 3', AR4: 'Réservé — niveau 4', AD: 'Défavorable' };
-const COULEURS = { AF: '#18753c', AF1: '#5ea46b', AR1: '#d69a00', AR2: '#c08000', AR3: '#b34000', AR4: '#8a3a00', AD: '#ce0500' };
+const AVIS = { AF: 'Favorable', AF1: 'Favorable avec précautions', AR1: 'Réservé — niveau 1', AR2: 'Réservé — niveau 2', AR3: 'Réservé — niveau 3', AR4: 'Réservé — niveau 4', AD: 'Défavorable', AD1: 'Défavorable — sécurité' };
+const COULEURS = { AF: '#18753c', AF1: '#5ea46b', AR1: '#d69a00', AR2: '#c08000', AR3: '#b34000', AR4: '#8a3a00', AD: '#ce0500', AD1: '#8f0000' };
 
 let rows = [], graphes = {};
 const horsGrist = window.self === window.top;

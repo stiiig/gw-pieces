@@ -60,7 +60,7 @@
 <script>
 const DEMARCHE = new URLSearchParams(location.search).get('demarche') || '';
 const T = { dossiers: `Demarche_${DEMARCHE}_dossiers`, champs: `Demarche_${DEMARCHE}_champs`, journal: 'Journal' };
-const AVIS = { AF: 'Favorable', AF1: 'Favorable avec précautions', AR1: 'Réservé — niveau 1', AR2: 'Réservé — niveau 2', AR3: 'Réservé — niveau 3', AR4: 'Réservé — niveau 4', AD: 'Défavorable' };
+const AVIS = { AF: 'Favorable', AF1: 'Favorable avec précautions', AR1: 'Réservé — niveau 1', AR2: 'Réservé — niveau 2', AR3: 'Réservé — niveau 3', AR4: 'Réservé — niveau 4', AD: 'Défavorable', AD1: 'Défavorable — sécurité' };
 const TECHNIQUES = /^(id|manualSort|gristHelper_.*|champ_id|dossier_id|labels_json|dossiers_supprimes_DN|.*_id)$/;
 // Libellés lisibles des colonnes techniques de la synchronisation (qui n'en ont pas)
 const LIBELLES = { dossier_number: 'N° dossier', state: 'État dans Démarche Numérique', date_depot: 'Date de dépôt', date_derniere_modification: 'Dernière modification',

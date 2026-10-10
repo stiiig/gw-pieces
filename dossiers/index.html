@@ -66,7 +66,7 @@
 const DEMARCHE = new URLSearchParams(location.search).get('demarche') || '';
 const T = { dossiers: `Demarche_${DEMARCHE}_dossiers`, champs: `Demarche_${DEMARCHE}_champs`, zrr: `Demarche_${DEMARCHE}_repetable_zrr_concernee_s`,
             refZrr: 'ZRR', refPays: 'Referentiel_Pays', utilisateurs: 'Utilisateurs', journal: 'Journal', corrections: 'Corrections' };
-const AVIS = { AF: 'Favorable', AF1: 'Favorable avec précautions', AR1: 'Réservé 1', AR2: 'Réservé 2', AR3: 'Réservé 3', AR4: 'Réservé 4', AD: 'Défavorable' };
+const AVIS = { AF: 'Favorable', AF1: 'Favorable avec précautions', AR1: 'Réservé 1', AR2: 'Réservé 2', AR3: 'Réservé 3', AR4: 'Réservé 4', AD: 'Défavorable', AD1: 'Défavorable — sécurité' };
 const PIECES = [['identite', "Pièce d'identité"], ['cv', 'CV'], ['mission', 'Mission'], ['financement', 'Financement']];
 
 let data = { dossiers: [], champs: {}, zrr: {}, refZrr: [], refPays: [], utilisateurs: [] };
@@ -117,7 +117,7 @@ const FILTRES = [['arad', 'Proposition réservé / défavorable', d => /^(AR|AD)
   ['correction', 'En attente de correction', enAttenteCorrection]];
 
 function etatBadge(d) {
-  if (d.Avis_date) return `<span class="badge ${d.Avis_final === 'AD' ? 'b-rouge' : 'b-vert'}">${esc(AVIS[d.Avis_final] || d.Avis_final)}</span>`;
+  if (d.Avis_date) return `<span class="badge ${['AD', 'AD1'].includes(d.Avis_final) ? 'b-rouge' : 'b-vert'}">${esc(AVIS[d.Avis_final] || d.Avis_final)}</span>`;
   if (enAttenteCorrection(d)) return '<span class="badge b-jaune">En attente de correction</span>';
   if (chezDecideur(d)) return '<span class="badge">Chez le décideur</span>';
   return '<span class="badge b-orange">À traiter</span>';

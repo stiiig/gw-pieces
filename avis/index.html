@@ -68,6 +68,9 @@
   .lettre .champ { font-weight: 700; }
   .lettre .manque { background: var(--jaune-clair); padding: 0 4px; font-style: italic; }
   .lettre .avert { font-weight: 700; margin-top: 16px; }
+  .lettre .en-tete { font: 700 11px/1.35 system-ui, sans-serif; margin-bottom: 18px; }
+  .lettre .decision { font-weight: 700; margin-top: 12px; }
+  .lettre .signataire { margin-top: 10px; }
   .lettre mark { background: #fff3a0; padding: 0 2px; }
   .lettre .legende { font: 12px system-ui, sans-serif; color: var(--gris); margin: -12px 0 14px; }
   .filigrane { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
@@ -101,14 +104,15 @@ const T = {
   zrr: `Demarche_${DEMARCHE}_repetable_zrr_concernee_s`,
   modeles: 'Modeles_Avis', parametres: 'Parametres_avis', journal: 'Journal',
 };
-// Les 7 avis, dans l'ordre d'affichage, avec leur libellé en clair.
+// Les 8 avis, dans l'ordre d'affichage, avec leur libellé en clair.
 const AVIS = [
   { code: 'AF', libelle: 'Favorable', favorable: true },
   { code: 'AF1', libelle: 'Favorable avec précautions', favorable: true },
   { code: 'AR1', libelle: 'Réservé — niveau 1' }, { code: 'AR2', libelle: 'Réservé — niveau 2' },
   { code: 'AR3', libelle: 'Réservé — niveau 3' }, { code: 'AR4', libelle: 'Réservé — niveau 4' },
-  { code: 'AD', libelle: 'Défavorable', rouge: true },
+  { code: 'AD', libelle: 'Défavorable', rouge: true }, { code: 'AD1', libelle: 'Défavorable — sécurité', rouge: true },
 ];
+const defavorable = code => code === 'AD' || code === 'AD1';  // motivation obligatoire, délai de recours
 const libelle = code => (AVIS.find(a => a.code === code) || {}).libelle || code || '—';
 const ONGLETS = [
   ['proposer', 'À proposer'], ['decideur', 'Chez le décideur'], ['envoyer', 'À envoyer'],
@@ -117,7 +121,7 @@ const ONGLETS = [
 
 let data = { dossiers: [], champs: {}, zrr: {}, modeles: {}, params: {} };
 let selection = null, onglet = 'proposer', enCours = false;
-let saisie = { proposition: '', motivation: '', decision: '', mesures: '' };
+let saisie = { proposition: '', motivation: '', decision: '', mesures: '', commentaire: '' };
 
 // --- Accès Grist (ou démo hors Grist) ---------------------------------------------------------
 const horsGrist = window.self === window.top;
@@ -181,7 +185,7 @@ function etape(d) {
 }
 function dansOnglet(d, o) {
   if (o === 'tous') return true;
-  if (o === 'defavorables') return d.Avis_final === 'AD' && !!d.Avis_date;
+  if (o === 'defavorables') return defavorable(d.Avis_final) && !!d.Avis_date;
   return etape(d) === o;
 }
 const PIECES = [['identite', 'Identité'], ['cv', 'CV'], ['mission', 'Mission'], ['financement', 'Financement']];
@@ -194,8 +198,8 @@ function rendreOnglets() {
 function badgeListe(d) {
   const e = etape(d);
   if (e === 'ar3') { const j = 15 - joursDepuis(d.AR3_date_notification); return `<span class="badge ${j < 0 ? 'rouge' : 'jaune'}">${j < 0 ? 'délai dépassé' : 'J-' + j}</span>`; }
-  if (d.Avis_final === 'AD' && d.Avis_date) { const j = d.Echeance_recours ? Math.ceil((d.Echeance_recours - aujourdhui()) / 86400) : null;
-    return `<span class="badge ${j != null && j < 0 ? 'vert' : 'rouge'}">${j == null ? 'Défavorable' : j < 0 ? 'recours échu' : 'recours J-' + j}</span>`; }
+  if (defavorable(d.Avis_final) && d.Avis_date) { const j = d.Echeance_recours ? Math.ceil((d.Echeance_recours - aujourdhui()) / 86400) : null;
+    return `<span class="badge ${j != null && j < 0 ? 'vert' : 'rouge'}">${j == null ? esc(libelle(d.Avis_final)) : j < 0 ? 'recours échu' : 'recours J-' + j}</span>`; }
   if (d.Avis_final) return `<span class="badge">${esc(libelle(d.Avis_final))}</span>`;
   if (d.Proposition_instructeur) return `<span class="badge jaune">proposé : ${esc(libelle(d.Proposition_instructeur))}</span>`;
   return `<span class="badge ${d.Jours_restants != null && d.Jours_restants < 15 ? 'alerte' : ''}">${d.Jours_restants ?? '—'} j restants</span>`;
@@ -216,7 +220,7 @@ function rendreListe() {
 // --- Détail ----------------------------------------------------------------------------------
 function ouvrir(id) {
   selection = id; const d = data.dossiers.find(x => x.id === id);
-  saisie = { proposition: d.Proposition_instructeur || '', motivation: d.Motivation_refus || '', decision: d.Avis_final || d.Proposition_instructeur || '', mesures: d.AR3_mesures || '' };
+  saisie = { proposition: d.Proposition_instructeur || '', motivation: d.Motivation_refus || '', decision: d.Avis_final || d.Proposition_instructeur || '', mesures: d.AR3_mesures || '', commentaire: d.Commentaire_avis || '' };
   rendreListe(); rendreDetail();
 }
 function etatDossier(d) {
@@ -251,7 +255,7 @@ function rendreDetail() {
 function blocProposer(d) {
   const crib = d.Criblage_resultat;
   const favOk = SANS_CRIBLAGE || crib === 'Inconnu';
-  const p = saisie.proposition, estAD = p === 'AD', versDecideur = p && !AVIS.find(a => a.code === p).favorable;
+  const p = saisie.proposition, estAD = defavorable(p), versDecideur = p && !AVIS.find(a => a.code === p).favorable;
   const manque = estAD && !saisie.motivation.trim();
   return `<div class="etape"><h3>1. Proposer un avis</h3><div class="qui">Instructeur</div>
     <div class="choix">${AVIS.map(a => `<button data-prop="${a.code}" class="${a.rouge ? 'rouge' : ''} ${p === a.code ? 'sel' : ''}" ${a.favorable && !favOk ? 'disabled' : ''}>${a.libelle}</button>`).join('')}</div>
@@ -291,39 +295,42 @@ function blocCourrier(d, envoye) {
       ${envoye ? '' : `<button id="envoye" ${enCours ? 'disabled' : ''}>Marquer comme envoyé</button>`}
       <span class="aide">Le PDF porte en filigrane le nom de l'agent qui l'a généré. Dépôt dans la messagerie du dossier DN.</span>
     </div>
-    ${d.Avis_final === 'AD' && d.Avis_date ? `<div class="rappel">Délai de recours de deux mois : échéance le <b>${dateFr(d.Echeance_recours)}</b>.</div>` : ''}
-    <div class="lettre" id="lettre">${courrierHtml(d, 'Aperçu')}</div></div>`;
+    ${envoye ? (d.Commentaire_avis ? `<div class="rappel">Commentaire ajouté au courrier : ${esc(d.Commentaire_avis)}</div>` : '')
+      : `<textarea id="commentaire" rows="2" placeholder="Commentaire ponctuel ajouté au courrier (facultatif)">${esc(saisie.commentaire)}</textarea>`}
+    ${defavorable(d.Avis_final) && d.Avis_date ? `<div class="rappel">Délai de recours de deux mois : échéance le <b>${dateFr(d.Echeance_recours)}</b>.</div>` : ''}
+    <div class="lettre" id="lettre">${courrierHtml(d, 'Aperçu', envoye ? d.Commentaire_avis : saisie.commentaire)}</div></div>`;
 }
 
 // --- Le courrier (mêmes blocs pour l'aperçu et le PDF) -----------------------------------------
-function courrier(d) {
+// Structure des modèles officiels du DPE (09/10) : textes dans Modeles_Avis et Parametres_avis.
+function courrier(d, commentaire) {
   const m = data.modeles[d.Avis_final] || {}, P = data.params, b = beneficiaire(d), c = b.c;
   const zrr = (data.zrr[String(d.dossier_number)] || []).join(', ');
   const date = d.Avis_date || aujourdhui();
   const blocs = [
+    ['entete', P.Entete || ''],
     ['titre', P.Titre || ''],
-    ['intitule', '☒ ' + (m.Intitule_courrier || libelle(d.Avis_final))],
     ['p', m.Introduction || ''],
-    ['champ', 'Courrier (message) en date du : ', null, 'date de recevabilité — définition attendue'],
-    ['champ', '[[Numéro de référence de la demande : ]]', '[[' + d.dossier_number + ']]'],
-    ['p', P.Visas || ''],
-    ['p', m.Phrase_decision || ''],
+    ['champ', 'Demande reçue en date du : ', dateFr(d.Depot_dt ?? d.date_depot)],
+    ['champ', 'N° de référence de la demande : ', String(d.dossier_number ?? '')],
     ['champ', 'Nom : ', b.nom], ['champ', 'Prénom(s) : ', b.prenoms], ['champ', 'Né(e) le : ', dateFr(c.date_de_naissance_du_beneficiaire)],
-    ['champ', 'Numéro de ZRR : ', zrr],
+    ['champ', 'N° de ZRR : ', zrr],
   ];
   if (m.Avec_periode) blocs.push(['champ', "Période d'accès en ZRR : ", `du ${dateFr(c.date_de_debut_de_la_mission_dans_la_zrr) || '—'} au ${dateFr(c.date_de_fin_de_la_mission_dans_la_zrr) || '—'}`]);
-  if (!['AF', 'AD'].includes(d.Avis_final) && m.Corps) blocs.push(['p', m.Corps]);
-  if (d.Avis_final === 'AR3' && d.AR3_mesures) blocs.push(['p', "Mesures proposées par l'établissement : " + d.AR3_mesures]);
-  blocs.push(['p', `Le [[${dateFr(date)}]] à ${P.Lieu || ''}`], ['p', '[[Signature numérique :]]'], ['p', [P.Signataire, P.Fonction, P.Service].filter(Boolean).join('\n')]);
-  if (m.Avertissement && P.Texte_avertissement) blocs.push(['avert', P.Texte_avertissement]);
+  blocs.push(['p', P.Visas || ''], ['decision', m.Phrase_decision || '']);
+  if (m.Corps) blocs.push(['p', m.Corps]);
+  if (commentaire && commentaire.trim()) blocs.push(['p', commentaire.trim()]);
+  if (m.Avertissement && m.Texte_avertissement) blocs.push(['avert', 'AVERTISSEMENT :'], ['p', m.Texte_avertissement]);
+  blocs.push(['p', `Le ${dateFr(date)} à ${P.Lieu || ''}`], ['p', 'Signature numérique :'], ['signataire', [P.Signataire, P.Fonction, P.Service].filter(Boolean).join('\n')]);
   return blocs;
 }
 // [[…]] dans un texte = formulation à confirmer par le métier : surlignée à l'écran, texte simple dans le PDF
 const surligne = s => esc(s).replace(/\[\[([\s\S]*?)\]\]/g, '<mark title="Formulation à confirmer">$1</mark>');
 const sansMarques = s => String(s ?? '').replace(/\[\[|\]\]/g, '');
-function courrierHtml(d, filigrane) {
-  const corps = courrier(d).map(([t, a, v, manque]) =>
-    t === 'titre' ? `<h4>${surligne(a)}</h4>` : t === 'intitule' ? `<div class="intitule">${surligne(a)}</div>`
+function courrierHtml(d, filigrane, commentaire) {
+  const corps = courrier(d, commentaire).map(([t, a, v, manque]) =>
+    t === 'titre' ? `<h4>${surligne(a)}</h4>` : t === 'entete' ? `<p class="en-tete">${surligne(a)}</p>`
+    : t === 'decision' ? `<p class="decision">${surligne(a)}</p>` : t === 'signataire' ? `<p class="signataire">${surligne(a)}</p>`
     : t === 'avert' ? `<p class="avert">${surligne(a)}</p>`
     : t === 'champ' ? `<p>${surligne(a)}${v ? `<span class="champ">${surligne(v)}</span>` : `<span class="manque">${esc(manque || 'à compléter')}</span>`}</p>`
     : `<p>${surligne(a)}</p>`).join('');
@@ -331,7 +338,7 @@ function courrierHtml(d, filigrane) {
   return aConfirmer + corps + `<div class="filigrane"><span>${esc(filigrane)}</span></div>`;
 }
 function nomFichier(d) {
-  const t = { AF: 'Favorable', AF1: 'Favorable', AD: 'Défavorable' }[d.Avis_final] || 'Reserve_' + d.Avis_final;
+  const t = { AF: 'Favorable', AF1: 'Favorable', AD: 'Defavorable', AD1: 'Defavorable' }[d.Avis_final] || 'Reserve_' + d.Avis_final;
   return `Avis_${t}_${d.dossier_number}.pdf`;
 }
 function pdf(d, filigrane) {
@@ -342,17 +349,19 @@ function pdf(d, filigrane) {
     for (const l of doc.splitTextToSize(txt, L)) { if (y > 275) { doc.addPage(); y = 24; } doc.text(l, opts.centre ? 105 : X, y, { align: opts.centre ? 'center' : 'left' }); y += (opts.taille || 11) * 0.45; }
     y += 2.5;
   };
-  for (const [t, a0, v0, manque] of courrier(d)) {
+  for (const [t, a0, v0, manque] of courrier(d, d.Commentaire_avis)) {
     const a = sansMarques(a0), v = v0 == null ? v0 : sansMarques(v0);
     if (t === 'titre') ligne(a, { gras: true, centre: true, taille: 13 });
-    else if (t === 'intitule') ligne(a.replace('☒ ', ''), { gras: true });  // ☒ absent des polices PDF standard
-    else if (t === 'avert') ligne(a, { gras: true });
+    else if (t === 'entete') { for (const l of a.split('\n')) ligne(l, { gras: true, taille: 9 }); y += 4; }
+    else if (t === 'avert' || t === 'decision') ligne(a, { gras: true });
+    else if (t === 'signataire') for (const l of a.split('\n')) ligne(l, { gras: l === a.split('\n')[0] });
     else if (t === 'champ') ligne(a + (v || `[${manque || 'à compléter'}]`));
     else for (const para of a.split('\n')) ligne(para);
   }
   const n = doc.getNumberOfPages();
-  for (let i = 1; i <= n; i++) {  // filigrane nominatif sur chaque page
-    doc.setPage(i); doc.saveGraphicsState(); doc.setGState(new doc.GState({ opacity: 0.12 }));
+  for (let i = 1; i <= n; i++) {  // pied « Page x sur y » et filigrane nominatif sur chaque page
+    doc.setPage(i); doc.setFont('times', 'normal'); doc.setFontSize(9); doc.text(`Page ${i} sur ${n}`, 188, 289, { align: 'right' });
+    doc.saveGraphicsState(); doc.setGState(new doc.GState({ opacity: 0.12 }));
     doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(0, 0, 145);
     filigrane.replace(' le ', '\nle ').split('\n').forEach((l, k) => doc.text(l, 38 + k * 6, 205 + k * 9, { angle: 35 }));  // 2 lignes, tient dans la page
     doc.restoreGraphicsState(); doc.setTextColor(0, 0, 0);
@@ -370,7 +379,7 @@ async function maj(d, champs, action, detail) {
 }
 const actions = {
   'valider-prop': async () => { const d = courant(), p = saisie.proposition, fav = AVIS.find(a => a.code === p).favorable;
-    await maj(d, { Proposition_instructeur: p, Motivation_refus: p === 'AD' ? saisie.motivation : '', Etat_interne: fav ? 'En instruction' : 'Chez le décideur', ...(fav ? { Avis_final: p } : {}) },
+    await maj(d, { Proposition_instructeur: p, Motivation_refus: defavorable(p) ? saisie.motivation : '', Etat_interne: fav ? 'En instruction' : 'Chez le décideur', ...(fav ? { Avis_final: p } : {}) },
       'PROPOSITION_AVIS', `Proposition : ${libelle(p)}${fav ? ' (avis arrêté)' : ' → décideur'}`);
     toast(fav ? 'Avis favorable arrêté' : 'Transmis au décideur'); },
   'valider-dec': async () => { const d = courant(), p = saisie.decision;
@@ -380,11 +389,14 @@ const actions = {
   'ar3-accepter': async () => { const d = courant(); await maj(d, { AR3_mesures: saisie.mesures, AR3_decision: 'Mesures acceptées' }, 'AR3_DECISION', 'Mesures acceptées — courrier réservé niveau 3 définitif'); toast('Mesures acceptées'); },
   'ar3-refuser': async () => { const d = courant(); await maj(d, { AR3_decision: 'Défavorable', Avis_final: 'AD' }, 'AR3_DECISION', 'Bascule en défavorable (mesures refusées ou absence de réponse)'); toast('Basculé en défavorable'); },
   'envoye': async () => { const d = courant(), ar3Premier = d.Avis_final === 'AR3' && !d.AR3_date_notification;
-    await maj(d, ar3Premier ? { AR3_date_notification: aujourdhui() } : { Avis_date: aujourdhui(), Etat_interne: 'Avis émis' },
+    await maj(d, { Commentaire_avis: saisie.commentaire.trim(), ...(ar3Premier ? { AR3_date_notification: aujourdhui() } : { Avis_date: aujourdhui(), Etat_interne: 'Avis émis' }) },
       'ENVOI_AVIS', `${libelle(d.Avis_final)}${ar3Premier ? ' — demande de mesures (15 jours)' : ''} marqué envoyé`);
     toast('Marqué comme envoyé'); },
-  'pdf': async () => { const d = courant();
-    await ecrire([journal(d, 'GENERATION_AVIS', `Courrier ${libelle(d.Avis_final)} généré (${nomFichier(d)})`)]);
+  'pdf': async () => { const d = courant(), envoye = !!d.Avis_date;
+    const comm = envoye ? (d.Commentaire_avis || '') : saisie.commentaire.trim();  // le PDF reprend le commentaire saisi
+    await ecrire([...(comm !== (d.Commentaire_avis || '') ? [['UpdateRecord', T.dossiers, d.id, { Commentaire_avis: comm }]] : []),
+      journal(d, 'GENERATION_AVIS', `Courrier ${libelle(d.Avis_final)} généré (${nomFichier(d)})${comm ? ' avec commentaire' : ''}`)]);
+    d.Commentaire_avis = comm;
     const qui = await auteurDerniereAction(d, 'GENERATION_AVIS');
     const maintenant = new Date().toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
     pdf(d, `Généré par ${qui || 'agent inconnu'} le ${maintenant} — dossier ${d.dossier_number}`); },
@@ -402,7 +414,7 @@ detail.addEventListener('click', e => {
   else if (actions[b.id]) verrou(actions[b.id]);
 });
 detail.addEventListener('input', e => {
-  const id = e.target.id; if (id !== 'motivation' && id !== 'mesures') return;
+  const id = e.target.id; if (!['motivation', 'mesures', 'commentaire'].includes(id)) return;
   saisie[id] = e.target.value; const pos = e.target.selectionStart; rendreDetail();
   const t = document.getElementById(id); t.focus(); t.setSelectionRange(pos, pos);
 });
@@ -418,7 +430,7 @@ async function demarrer() {
 // --- Données de démonstration (hors Grist uniquement, entièrement fictives) ----------------------
 function demo() {
   const j = s => Date.UTC(...s.split('-').map((v, i) => i === 1 ? v - 1 : +v)) / 1000, auj = aujourdhui();
-  const base = (id, n, extra) => ({ id, dossier_number: String(n), Jours_restants: 40, Lien_dossier_DN: `Ouvrir https://demarche.numerique.gouv.fr/procedures/0/dossiers/${n}`,
+  const base = (id, n, extra) => ({ id, dossier_number: String(n), date_depot: '2026-09-15T10:00:00+02:00', Jours_restants: 40, Lien_dossier_DN: `Ouvrir https://demarche.numerique.gouv.fr/procedures/0/dossiers/${n}`,
     PJ_identite_statut: 'Valide', PJ_cv_statut: 'Valide', PJ_mission_statut: 'Valide', PJ_financement_statut: 'Valide', ...extra });
   const dossiers = [
     base(1, 90000001, { Criblage_resultat: 'Inconnu', Jours_restants: 52 }),
@@ -427,15 +439,17 @@ function demo() {
     base(4, 90000004, { Criblage_resultat: 'Inconnu', Avis_final: 'AR3', AR3_date_notification: auj - 17 * 86400, Jours_restants: 25 }),
     base(5, 90000005, { Criblage_resultat: 'Connu', Avis_final: 'AD', Avis_date: j('2026-09-01'), Echeance_recours: j('2026-11-01'), Jours_restants: 5 }),
     base(6, 90000006, { Criblage_resultat: 'Différé', Jours_restants: 44 }),
+    base(7, 90000007, { Criblage_resultat: 'Connu', Avis_final: 'AD1', Avis_date: j('2026-10-01'), Echeance_recours: j('2026-12-01'), Commentaire_avis: 'Commentaire fictif.', Jours_restants: 30 }),
   ];
-  const noms = ['Tintin RÉPORTER', 'Rastapopoulos ROBERTO', 'Bianca CASTAFIORE', 'Tryphon TOURNESOL', 'Olivera ALLAN', 'Séraphin LAMPION'];
+  const noms = ['Tintin RÉPORTER', 'Rastapopoulos ROBERTO', 'Bianca CASTAFIORE', 'Tryphon TOURNESOL', 'Olivera ALLAN', 'Séraphin LAMPION', 'Abdallah EMIR'];
   const champs = Object.fromEntries(dossiers.map((d, i) => { const [p, n] = noms[i].split(' ');
     return [d.dossier_number, { prenom_s_du_beneficiaire: p, nom_de_naissance_du_beneficiaire: n, date_de_naissance_du_beneficiaire: j('1995-03-0' + (i + 1)),
       quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr: 'Institut fictif du Belgistan', date_de_debut_de_la_mission_dans_la_zrr: j('2026-11-02'), date_de_fin_de_la_mission_dans_la_zrr: j('2027-04-30') }]; }));
-  const mod = (code, extra) => ({ Code: code, Intitule_courrier: '[intitulé fictif]', Introduction: '[introduction fictive]', Phrase_decision: '[phrase de décision fictive]', Avec_periode: true, Corps: '[texte fictif du niveau]', ...extra });
-  const modeles = Object.fromEntries(AVIS.map(a => [a.code, mod(a.code, a.code === 'AD' ? { Avec_periode: false } : a.code.startsWith('AR') ? { Avertissement: true } : {})]));
+  const mod = code => ({ Code: code, Introduction: '[introduction fictive]', Phrase_decision: `[décision fictive ${code}]`, Avec_periode: true,
+    Corps: code.startsWith('AR') ? '[texte fictif du niveau]' : '', Avertissement: true, Texte_avertissement: '[avertissement fictif]' });
+  const modeles = Object.fromEntries(AVIS.map(a => [a.code, mod(a.code)]));
   return { dossiers, champs, zrr: Object.fromEntries(dossiers.map(d => [d.dossier_number, ['00X0ZRR0']])), modeles,
-    params: { Titre: '[titre fictif]', Visas: '[visas fictifs]', Lieu: '[lieu]', Signataire: '[signataire fictif]', Texte_avertissement: '[avertissement fictif]' } };
+    params: { Entete: '[en-tête fictif]', Titre: '[titre fictif]', Visas: '[visas fictifs]', Lieu: '[lieu]', Signataire: '[signataire fictif]' } };
 }
 
 if (horsGrist) { document.getElementById('demo').hidden = false; demarrer(); }
