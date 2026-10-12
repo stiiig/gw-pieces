@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mes demandes</title>
+<!-- Widget Grist : liste en lecture seule des demandes que la personne connectée a le droit de voir
+     (le tri par établissement est fait par les règles d'accès du document, pas par cet écran).
+     Accès « lecture de la table » suffisant. -->
+<script src="../lib/grist-plugin-api.js"></script>
+<style>
+  :root { --bleu: #000091; --texte: #161616; --gris: #666; --bord: #ddd; --fond: #f6f6f6; --rouge: #ce0500; --vert: #18753c; }
+  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--texte); background: #fff; }
+  header { padding: 14px 18px; border-bottom: 1px solid var(--bord); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  h1 { font-size: 18px; margin: 0; color: var(--bleu); }
+  .n { color: var(--gris); }
+  input { margin-left: auto; padding: 6px 10px; border: 1px solid var(--bord); border-radius: 6px; font: inherit; min-width: 220px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--bord); }
+  th { background: var(--fond); font-weight: 600; position: sticky; top: 0; }
+  .avis-def { color: var(--rouge); font-weight: 600; } .avis-fav { color: var(--vert); font-weight: 600; }
+  .vide { padding: 30px; color: var(--gris); text-align: center; }
+</style>
+</head>
+<body>
+<header><h1>Mes demandes</h1><span class="n" id="n"></span><input id="q" placeholder="Rechercher un nom, une ZRR…"></header>
+<div id="liste"></div>
+<script>
+let lignes = [];
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const date = v => v ? new Date(typeof v === 'number' ? v * 1000 : v).toLocaleDateString('fr-FR', { timeZone: 'UTC' }) : '';
+function rendre() {
+  const q = document.getElementById('q').value.trim().toLowerCase();
+  const l = lignes.filter(r => !q || `${r.Nom} ${r.Prenom} ${r.ZRR} ${r.Numero}`.toLowerCase().includes(q));
+  document.getElementById('n').textContent = `${l.length} demande${l.length > 1 ? 's' : ''}`;
+  document.getElementById('liste').innerHTML = l.length ? `<table><thead><tr><th>N°</th><th>Établissement</th><th>Nom</th><th>Prénom</th><th>ZRR</th><th>Période</th><th>État</th><th>Avis</th></tr></thead><tbody>${
+    l.map(r => `<tr><td>${esc(r.Numero)}</td><td>${esc(r.Etablissement)}</td><td>${esc(r.Nom)}</td><td>${esc(r.Prenom)}</td><td>${esc(r.ZRR)}</td>
+      <td>du ${date(r.Debut)} au ${date(r.Fin)}</td><td>${esc(r.Etat)}</td>
+      <td class="${/^Défavorable/.test(r.Avis || '') ? 'avis-def' : /^Favorable/.test(r.Avis || '') ? 'avis-fav' : ''}">${esc(r.Avis)}${r.Date_avis ? ' · ' + date(r.Date_avis) : ''}</td></tr>`).join('')}</tbody></table>`
+    : '<div class="vide">Aucune demande à afficher.</div>';
+}
+document.getElementById('q').addEventListener('input', rendre);
+grist.ready({ requiredAccess: 'read table' });
+grist.onRecords(r => { lignes = r || []; rendre(); });
+</script>
+</body>
+</html>
