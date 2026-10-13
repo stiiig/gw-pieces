@@ -137,7 +137,13 @@ const COMPTEURS = [['instr', 'À traiter instructeurs', aTraiterInstructeur], ['
   ['correction', 'En attente de correction', enAttenteCorrection], ['risque', 'Risque de forclusion', risque, true]];
 const FILTRES = [['arad', 'Proposition réservé / défavorable', d => /^(AR|AD)/.test(d.Proposition_instructeur || '') && !d.Avis_date],
   ['ar3', 'Décision réservé 3', d => d.Avis_final === 'AR3'], ['differe', 'Criblages différés', d => d.Criblage_resultat === 'Différé'],
-  ['correction', 'En attente de correction', enAttenteCorrection]];
+  ['correction', 'En attente de correction', enAttenteCorrection], ['connu', 'Déjà connus', d => !!d.Deja_connu]];
+// Autres demandes de la même personne dans l'outil : même nom de naissance et même date de naissance (règle de la colonne « Déjà connu »)
+// Sur les valeurs saisies par le déposant (comme la colonne), pas sur les valeurs corrigées par l'agent.
+const brut = (c, k) => c._origine && k in c._origine ? c._origine[k] : c[k];
+const cle = c => `${String(brut(c, 'nom_de_naissance_du_beneficiaire') || '').trim().toLowerCase()}|${brut(c, 'date_de_naissance_du_beneficiaire') ?? ''}`;
+const autresDemandes = d => { const k = cle(C(d)); return k === '|' ? [] : data.dossiers.filter(x => x.id !== d.id && cle(C(x)) === k).sort((a, b) => (b.Depot_dt || 0) - (a.Depot_dt || 0)); };
+const badgeConnu = d => d.Deja_connu ? ' <span class="badge b-jaune" title="Même nom de naissance et même date de naissance qu\'une autre demande">déjà connu</span>' : '';
 
 function etatBadge(d) {
   if (d.Avis_date) return `<span class="badge ${['AD', 'AD1'].includes(d.Avis_final) ? 'b-rouge' : 'b-vert'}">${esc(AVIS[d.Avis_final] || d.Avis_final)}</span>`;
@@ -166,7 +172,7 @@ function rendreListe() {
       <th>Pays de naissance</th><th>Nationalité</th><th>Poste</th><th>Début</th><th>Fin</th><th>Criblage</th><th>Proposition</th><th>Décision</th><th>Envoyé le</th><th>Traitement</th><th>État</th></tr></thead>
     <tbody>${ds.map(d => { const c = C(d); return `<tr data-id="${d.id}">
       <td>${dateFr(d.Depot_dt)}</td><td>${esc(nomInstructeur(d))}</td><td>${esc(c.quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr)}</td><td>${esc(zrrDe(d).join(', '))}</td>
-      <td>${esc(c.nom_de_naissance_du_beneficiaire)}</td><td>${esc(c.prenom_s_du_beneficiaire)}</td><td>${dateFr(c.date_de_naissance_du_beneficiaire)}</td><td>${esc(c.ville_de_naissance_du_beneficiaire)}</td>
+      <td>${esc(c.nom_de_naissance_du_beneficiaire)}${badgeConnu(d)}</td><td>${esc(c.prenom_s_du_beneficiaire)}</td><td>${dateFr(c.date_de_naissance_du_beneficiaire)}</td><td>${esc(c.ville_de_naissance_du_beneficiaire)}</td>
       <td>${esc(c.pays_de_naissance_du_beneficiaire)}</td><td>${esc(nationalites(d).join(', '))}</td><td>${esc(c.intitule_du_poste)}</td>
       <td>${dateFr(c.date_de_debut_de_la_mission_dans_la_zrr)}</td><td>${dateFr(c.date_de_fin_de_la_mission_dans_la_zrr)}</td>
       <td>${d.Criblage_resultat ? `<span class="badge ${d.Criblage_resultat === 'Inconnu' ? 'b-vert' : d.Criblage_resultat === 'Connu' ? 'b-rouge' : 'b-jaune'}">${esc(d.Criblage_resultat)}</span>` : d.Criblage_envoi_date ? 'envoyé le ' + dateFr(d.Criblage_envoi_date) : ''}</td>
@@ -204,7 +210,7 @@ const RUBRIQUES = [
 function rendreFiche() {
   const d = data.dossiers.find(x => x.id === selection); if (!d) { vue = 'liste'; return rendreListe(); }
   const c = C(d), cotZ = zrrDe(d).map(z => [z, cotationZrr(z)]), nats = nationalites(d);
-  const nCorr = Object.keys(c._corrections || {}).length;
+  const nCorr = Object.keys(c._corrections || {}).length, autres = autresDemandes(d);
   const champ = ([k, l, f], modifiable) => {
     const v = c[k], s = f ? f(v) : v, corr = c._corrections?.[k], vide = s === '' || s == null;
     const badge = corr ? ' <span class="badge b-jaune">corrigé</span>' : '';
@@ -217,7 +223,7 @@ function rendreFiche() {
   document.getElementById('contenu').innerHTML = `
     <button id="retour">← Tous les dossiers</button>
     <div class="fiche-haut"><div><h2>${esc([c.prenom_s_du_beneficiaire, c.nom_de_naissance_du_beneficiaire].filter(Boolean).join(' '))}</h2>
-      <div class="sous">Dossier n° ${esc(d.dossier_number)} · reçu le ${dateFr(d.Depot_dt)} · ${etatBadge(d)} ${d.label_names ? '· ' + esc(d.label_names) : ''}${nCorr ? ` · <span class="badge b-jaune">${nCorr} donnée${nCorr > 1 ? 's' : ''} corrigée${nCorr > 1 ? 's' : ''}</span>` : ''}</div></div>
+      <div class="sous">Dossier n° ${esc(d.dossier_number)} · reçu le ${dateFr(d.Depot_dt)} · ${etatBadge(d)}${badgeConnu(d)} ${d.label_names ? '· ' + esc(d.label_names) : ''}${nCorr ? ` · <span class="badge b-jaune">${nCorr} donnée${nCorr > 1 ? 's' : ''} corrigée${nCorr > 1 ? 's' : ''}</span>` : ''}</div></div>
       <div>${[['pieces', 'Pièces'], ['criblage', 'Criblage'], ['avis', 'Avis']].map(([k, l]) => lienEcran(k, d.id) ? `<a class="bouton" target="_top" href="${esc(lienEcran(k, d.id))}">${l} →</a> ` : '').join('')}${modeCorrection ? '' : '<button id="mode-correction">✎ Corriger des données</button> '}${d.Lien_pieces_DN ? `<a class="bouton plein" target="_blank" rel="noopener" href="${esc(d.Lien_pieces_DN.split(' ').pop())}">Pièces dans DN</a> ` : ''}${d.Lien_dossier_DN ? `<a class="bouton" target="_blank" rel="noopener" href="${esc(d.Lien_dossier_DN.split(' ').pop())}">Dossier dans DN</a>` : ''}</div></div>
     ${modeCorrection ? `<div class="bandeau-correction"><span><b>Mode correction</b> : modifiez les champs voulus. La saisie du déposant est conservée et chaque correction est inscrite au journal.</span>
       <button class="plein" id="corr-ok" ${enCours ? 'disabled' : ''}>Enregistrer les corrections</button><button id="corr-annuler">Annuler</button></div>` : ''}
@@ -226,6 +232,9 @@ function rendreFiche() {
         ${cotZ.map(([z, v]) => `<div><dt>ZRR ${esc(z)}</dt><dd class="cotation">${v ?? 'non référencée'}</dd></div>`).join('') || '<div><dt>ZRR</dt><dd>—</dd></div>'}
         ${nats.map((n, i) => `<div><dt>Nationalité ${i + 1} : ${esc(n)}</dt><dd class="cotation">${cotationPays(n) ?? 'non référencée'}</dd></div>`).join('')}
       </dl></section>
+      ${d.Deja_connu ? `<section><h3>Autres demandes de cette personne</h3>${autres.length ? `<table><thead><tr><th>N°</th><th>Reçu le</th><th>Établissement</th><th>N° de ZRR</th><th>Décision</th><th>Envoyé le</th></tr></thead><tbody>${
+        autres.map(x => `<tr data-id="${x.id}"><td>${esc(x.dossier_number)}</td><td>${dateFr(x.Depot_dt)}</td><td>${esc(C(x).quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr)}</td><td>${esc(zrrDe(x).join(', '))}</td><td>${esc(AVIS[x.Avis_final] || '—')}</td><td>${dateFr(x.Avis_date) || '—'}</td></tr>`).join('')}</tbody></table>`
+        : '<div class="sous">Même nom de naissance et même date de naissance qu\'une autre demande, qui n\'apparaît pas dans la liste.</div>'}</section>` : ''}
       ${RUBRIQUES.map(([t, cs]) => { const h = cs.map(x => champ(x, modifiable(t, x))).join(''); return h ? `<section><h3>${esc(t)}</h3><dl>${h}</dl></section>` : ''; }).join('')}
     </div><div>
       <section><h3>Instructeur</h3><select id="attribution" style="width:100%"><option value="">— non attribué —</option>
@@ -301,13 +310,16 @@ function demo() {  // entièrement fictif
     { id: 1, dossier_number: '90000001', Depot_dt: auj - 10 * 86400, Jours_restants: 50, Attribue_a: 1 },
     { id: 2, dossier_number: '90000002', Depot_dt: auj - 50 * 86400, Jours_restants: 10, Etat_interne: 'Chez le décideur', Proposition_instructeur: 'AD', Criblage_resultat: 'Connu' },
     { id: 3, dossier_number: '90000003', Depot_dt: auj - 20 * 86400, Jours_restants: 40, PJ_cv_statut: 'Non valide', Message_correction_date: auj - 3 * 86400, Attribue_a: 2 },
+    { id: 4, dossier_number: '90000004', Depot_dt: auj - 400 * 86400, Avis_final: 'AF', Avis_date: auj - 380 * 86400, Deja_connu: true },
   ];
+  dossiers[0].Deja_connu = true;
   const brut = { '90000001': { prenom_s_du_beneficiaire: 'Tintin', nom_de_naissance_du_beneficiaire: 'RÉPORTER', date_de_naissance_du_beneficiaire: Date.UTC(1929, 0, 10) / 1000, nationalite_du_beneficiaire: 'Syldavie', quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr: 'Institut fictif' },
     '90000002': { prenom_s_du_beneficiaire: 'Bianca', nom_de_naissance_du_beneficiaire: 'CASTAFIORE', nationalite_du_beneficiaire: 'Bordurie', autre_nationalite_du_beneficiaire: 'Syldavie' },
-    '90000003': { prenom_s_du_beneficiaire: 'Tryphon', nom_de_naissance_du_beneficiaire: 'TOURNESOL', nationalite_du_beneficiaire: 'Belgistan' } };
+    '90000003': { prenom_s_du_beneficiaire: 'Tryphon', nom_de_naissance_du_beneficiaire: 'TOURNESOL', nationalite_du_beneficiaire: 'Belgistan' },
+    '90000004': { prenom_s_du_beneficiaire: 'Tintin', nom_de_naissance_du_beneficiaire: 'RÉPORTER', date_de_naissance_du_beneficiaire: Date.UTC(1929, 0, 10) / 1000, nationalite_du_beneficiaire: 'Syldavie', quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr: 'Institut fictif' } };
   const corrections = [{ id: 1, Dossier: '90000001', Champ: 'date_de_naissance_du_beneficiaire', Valeur_corrigee: '1929-01-11', Auteur_nom: 'Agent fictif 1', Horodatage: auj }];
   const champs = Object.fromEntries(corriger(Object.entries(brut).map(([n, c]) => ({ dossier_number: n, ...c })), corrections).map(c => [c.dossier_number, c]));
-  return { dossiers, champs, zrr: { '90000001': ['00X0ZRR0'] }, refZrr: [{ Code: '00X0ZRR0', Cotation: 3 }], refPays: [{ Pays: 'Syldavie', Cotation: 2 }, { Pays: 'Bordurie', Cotation: 5 }],
+  return { dossiers, champs, zrr: { '90000001': ['00X0ZRR0'], '90000004': ['00X0ZRR0'] }, refZrr: [{ Code: '00X0ZRR0', Cotation: 3 }], refPays: [{ Pays: 'Syldavie', Cotation: 2 }, { Pays: 'Bordurie', Cotation: 5 }],
     utilisateurs: [{ id: 1, Nom: 'Agent fictif 1', Role: 'Instructeur' }, { id: 2, Nom: 'Agent fictif 2', Role: 'Instructeur' }] };
 }
 if (horsGrist) { document.getElementById('demo').hidden = false; demarrer(); }
