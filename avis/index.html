@@ -220,6 +220,7 @@ function rendreListe() {
 // --- Détail ----------------------------------------------------------------------------------
 function ouvrir(id) {
   selection = id; const d = data.dossiers.find(x => x.id === id);
+  if (d && !dansOnglet(d, onglet)) { const e = etape(d); onglet = ONGLETS.some(([k]) => k === e) ? e : 'tous'; }  // ouvert par un lien : l'onglet suit le dossier
   saisie = { proposition: d.Proposition_instructeur || '', motivation: d.Motivation_refus || '', decision: d.Avis_final || d.Proposition_instructeur || '', mesures: d.AR3_mesures || '', commentaire: d.Commentaire_avis || '' };
   rendreListe(); rendreDetail();
 }
