@@ -138,10 +138,14 @@ function vueLots() {
 function vueListe(k) {
   const ds = data.dossiers.filter(filtres[k]);
   if (!ds.length) return `<div class="vide">Aucun dossier.</div>`;
-  return `<table><thead><tr><th>N° dossier</th><th>Bénéficiaire</th><th>Lot</th><th>Envoyé le</th><th>Retour le</th><th>Résultat</th>${k === 'differes' ? '<th>En attente depuis</th>' : ''}</tr></thead><tbody>
+  const diff = k === 'differes';
+  return `<table><thead><tr><th>N° dossier</th><th>Bénéficiaire</th><th>Lot</th><th>Envoyé le</th><th>Retour le</th><th>Résultat</th>${diff ? '<th>En attente depuis</th><th>Retour définitif</th>' : ''}</tr></thead><tbody>
     ${ds.map(d => `<tr><td>${esc(d.dossier_number)}</td><td>${esc(nom(d))}</td><td>${esc(d.Criblage_lot || '')}</td><td>${dateFr(d.Criblage_envoi_date)}</td><td>${dateFr(d.Criblage_retour_date)}</td>
       <td class="res"><button class="${d.Criblage_resultat} sel" disabled style="opacity:1">${esc(d.Criblage_resultat)}</button></td>
-      ${k === 'differes' ? `<td>${jours(d.Criblage_retour_date) ?? '—'} jour(s)</td>` : ''}</tr>`).join('')}</tbody></table>`;
+      ${diff ? `<td>${jours(d.Criblage_retour_date) ?? '—'} jour(s)</td>
+      <td class="res">${['Inconnu', 'Connu'].map(r => `<button data-res="${r}" data-id="${d.id}" class="${r} ${saisies[d.id] === r ? 'sel' : ''}">${r}</button>`).join(' ')}
+        <button class="plein" data-definitif="${d.id}" ${!['Inconnu', 'Connu'].includes(saisies[d.id]) || enCours ? 'disabled' : ''}>Enregistrer</button></td>` : ''}</tr>`).join('')}</tbody></table>
+    ${diff ? '<div class="aide">Quand le retour définitif arrive, choisir « Inconnu » ou « Connu » puis « Enregistrer » : le dossier est débloqué pour l\'avis.</div>' : ''}`;
 }
 
 // --- Actions ---------------------------------------------------------------------------------
@@ -178,6 +182,13 @@ async function enregistrerRetour(lot) {
   ds.forEach((d, i) => { d.Criblage_resultat = res[i]; d.Criblage_retour_date = aujourdhui(); delete saisies[d.id]; });
   toast('Retour enregistré');
 }
+async function enregistrerDefinitif(id) {  // retour définitif d'un criblage différé
+  const d = data.dossiers.find(x => x.id === id), res = saisies[id];
+  await ecrire([['UpdateRecord', T.dossiers, id, { Criblage_resultat: res, Criblage_retour_date: aujourdhui() }],
+    journal('RETOUR_CRIBLAGE', `Différé → ${res.toLowerCase()} (retour définitif)`, String(d.dossier_number))]);
+  d.Criblage_resultat = res; d.Criblage_retour_date = aujourdhui(); delete saisies[id];
+  toast('Retour définitif enregistré');
+}
 async function verrou(f) { if (enCours) return; enCours = true; rendre(); try { await f(); } catch (e) { toast('Erreur : ' + e.message); } finally { enCours = false; rendre(); } }
 
 document.body.addEventListener('click', e => {
@@ -189,6 +200,7 @@ document.body.addEventListener('click', e => {
   else if (b.dataset.res) { saisies[b.dataset.id] = b.dataset.res; rendre(); }
   else if (b.dataset.tous) { data.dossiers.filter(d => enCoursDeCriblage(d) && (d.Criblage_lot || 'Lot sans nom') === b.dataset.tous).forEach(d => saisies[d.id] = 'Inconnu'); rendre(); }
   else if (b.dataset.enreg) verrou(() => enregistrerRetour(b.dataset.enreg));
+  else if (b.dataset.definitif) verrou(() => enregistrerDefinitif(Number(b.dataset.definitif)));
 });
 document.body.addEventListener('change', e => {
   if (e.target.type !== 'checkbox' || !e.target.dataset.id) return;

@@ -269,7 +269,7 @@ function blocProposer(d) {
 function blocDecideur(d) {
   const p = saisie.decision;
   return `<div class="etape"><h3>2. Arrêter l'avis</h3><div class="qui">Décideur</div>
-    <div class="rappel">Proposition de l'instructeur : <b>${esc(libelle(d.Proposition_instructeur))}</b>${d.Motivation_refus ? `<br>Motivation : ${esc(d.Motivation_refus)}` : ''}</div>
+    <div class="rappel">${d.Avis_final ? `Avis arrêté précédemment, à modifier : <b>${esc(libelle(d.Avis_final))}</b><br>` : ''}Proposition de l'instructeur : <b>${esc(libelle(d.Proposition_instructeur))}</b>${d.Motivation_refus ? `<br>Motivation : ${esc(d.Motivation_refus)}` : ''}</div>
     <div class="choix" style="margin-top:10px">${AVIS.map(a => `<button data-dec="${a.code}" class="${a.rouge ? 'rouge' : ''} ${p === a.code ? 'sel' : ''}">${a.libelle}</button>`).join('')}</div>
     <div class="barre"><button id="valider-dec" class="plein" ${!p || enCours ? 'disabled' : ''}>Arrêter l'avis : ${esc(libelle(p))}</button>
       <span class="aide">Le dossier revient à l'instructeur, qui envoie le courrier.</span></div></div>`;
@@ -292,7 +292,8 @@ function blocCourrier(d, envoye) {
     <div class="qui">${envoye ? `Envoyé le ${dateFr(d.Avis_date)}` : 'Instructeur'}${ar3Premier ? ' · premier courrier : demande de mesures à l\'établissement (15 jours)' : ''}</div>
     <div class="barre">
       <button id="pdf" class="plein" ${enCours ? 'disabled' : ''}>Télécharger le PDF</button>
-      ${envoye ? '' : `<button id="envoye" ${enCours ? 'disabled' : ''}>Marquer comme envoyé</button>`}
+      ${envoye ? '' : `<button id="envoye" ${enCours ? 'disabled' : ''}>Marquer comme envoyé</button>
+      <button id="modifier-avis" ${enCours ? 'disabled' : ''}>Modifier l'avis</button>`}
       <span class="aide">Le PDF porte en filigrane le nom de l'agent qui l'a généré. Dépôt dans la messagerie du dossier DN.</span>
     </div>
     ${envoye ? (d.Commentaire_avis ? `<div class="rappel">Commentaire ajouté au courrier : ${esc(d.Commentaire_avis)}</div>` : '')
@@ -385,6 +386,10 @@ const actions = {
   'valider-dec': async () => { const d = courant(), p = saisie.decision;
     await maj(d, { Avis_final: p, Etat_interne: 'En instruction' }, 'DECISION_AVIS', `Avis arrêté par le décideur : ${libelle(p)} (proposé : ${libelle(d.Proposition_instructeur)})`);
     toast('Avis arrêté : ' + libelle(p)); },
+  // Avis arrêté mais pas encore envoyé : retour chez le décideur, qui arrête le nouvel avis (trace au journal)
+  'modifier-avis': async () => { const d = courant();
+    await maj(d, { Etat_interne: 'Chez le décideur' }, 'MODIFICATION_AVIS', `Avis ${libelle(d.Avis_final)} renvoyé au décideur pour modification`);
+    saisie.decision = d.Avis_final; toast('Renvoyé au décideur pour modification'); },
   'enr-mesures': async () => { const d = courant(); await maj(d, { AR3_mesures: saisie.mesures }, 'AR3_MESURES', 'Mesures de l\'établissement enregistrées'); toast('Mesures enregistrées'); },
   'ar3-accepter': async () => { const d = courant(); await maj(d, { AR3_mesures: saisie.mesures, AR3_decision: 'Mesures acceptées' }, 'AR3_DECISION', 'Mesures acceptées — courrier réservé niveau 3 définitif'); toast('Mesures acceptées'); },
   'ar3-refuser': async () => { const d = courant(); await maj(d, { AR3_decision: 'Défavorable', Avis_final: 'AD' }, 'AR3_DECISION', 'Bascule en défavorable (mesures refusées ou absence de réponse)'); toast('Basculé en défavorable'); },
