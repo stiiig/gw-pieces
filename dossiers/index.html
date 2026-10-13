@@ -79,7 +79,30 @@ async function charger() {
   const [d, c, z, rz, rp, u, k] = await Promise.all([lire(T.dossiers), lire(T.champs), lire(T.zrr, true), lire(T.refZrr, true), lire(T.refPays, true), lire(T.utilisateurs, true), lire(T.corrections, true)]);
   data = { dossiers: d, champs: Object.fromEntries(corriger(c, k).map(x => [String(x.dossier_number), x])),
     zrr: z.reduce((a, x) => ((a[String(x.dossier_number)] ||= []).push(x.numero_de_la_zrr), a), {}), refZrr: rz, refPays: rp, utilisateurs: u };
+  ecrans = await reperer().catch(() => ({}));
 }
+// Liens directs depuis la fiche vers les autres écrans, positionnés sur le dossier (ancre Grist #a1.s<section>.r<ligne>.c<colonne>).
+// Les écrans sont repérés dans les métadonnées du document par le dossier de leur adresse ; la racine = validation des pièces.
+let ecrans = {};
+async function reperer() {
+  const [sec, pages, tables, cols, jeton] = await Promise.all(['_grist_Views_section', '_grist_Pages', '_grist_Tables', '_grist_Tables_column']
+    .map(t => grist.docApi.fetchTable(t).then(lignes)).concat(grist.docApi.getAccessToken({ readOnly: true })));
+  const m = /^(https?:\/\/[^/]+)(.*)\/api\/docs\/([^/?#]+)/.exec(jeton.baseUrl || ''); if (!m) return {};
+  const base = `${m[1]}${m[2] || '/o/docs'}/${m[3]}`;
+  const table = (tables.find(t => t.tableId === T.dossiers) || {}).id;
+  const col = (cols.find(c => c.parentId === table && c.colId === 'dossier_number') || {}).id;
+  const out = {};
+  for (const sct of sec) {
+    if (sct.tableRef !== table || !sct.options) continue;
+    let url; try { url = new URL(JSON.parse(JSON.parse(sct.options).customView || '{}').url); } catch (e) { continue; }
+    const dossier = url.pathname.split('/').filter(Boolean).pop();
+    const nom = { avis: 'avis', criblage: 'criblage' }[dossier] || (['dossiers', 'export', 'tableau-de-bord', 'espace'].includes(dossier) ? null : 'pieces');
+    const page = pages.find(p => p.viewRef === sct.parentId);
+    if (nom && page) out[nom] = { page: page.id, section: sct.id, col, base };
+  }
+  return out;
+}
+const lienEcran = (nom, rowId) => { const e = ecrans[nom]; return e ? `${e.base}/p/${e.page}#a1.s${e.section}.r${rowId}.c${e.col}` : ''; };
 // Corrections de l'agent : la dernière ligne de Corrections pour un (dossier, champ) remplace la valeur du formulaire ;
 // la valeur d'origine reste dans la table synchronisée et dans _origine. Dates corrigées au format AAAA-MM-JJ.
 const estDate = k => /^date_/.test(k);
@@ -195,7 +218,7 @@ function rendreFiche() {
     <button id="retour">← Tous les dossiers</button>
     <div class="fiche-haut"><div><h2>${esc([c.prenom_s_du_beneficiaire, c.nom_de_naissance_du_beneficiaire].filter(Boolean).join(' '))}</h2>
       <div class="sous">Dossier n° ${esc(d.dossier_number)} · reçu le ${dateFr(d.Depot_dt)} · ${etatBadge(d)} ${d.label_names ? '· ' + esc(d.label_names) : ''}${nCorr ? ` · <span class="badge b-jaune">${nCorr} donnée${nCorr > 1 ? 's' : ''} corrigée${nCorr > 1 ? 's' : ''}</span>` : ''}</div></div>
-      <div>${modeCorrection ? '' : '<button id="mode-correction">✎ Corriger des données</button> '}${d.Lien_pieces_DN ? `<a class="bouton plein" target="_blank" rel="noopener" href="${esc(d.Lien_pieces_DN.split(' ').pop())}">Pièces dans DN</a> ` : ''}${d.Lien_dossier_DN ? `<a class="bouton" target="_blank" rel="noopener" href="${esc(d.Lien_dossier_DN.split(' ').pop())}">Dossier dans DN</a>` : ''}</div></div>
+      <div>${[['pieces', 'Pièces'], ['criblage', 'Criblage'], ['avis', 'Avis']].map(([k, l]) => lienEcran(k, d.id) ? `<a class="bouton" target="_top" href="${esc(lienEcran(k, d.id))}">${l} →</a> ` : '').join('')}${modeCorrection ? '' : '<button id="mode-correction">✎ Corriger des données</button> '}${d.Lien_pieces_DN ? `<a class="bouton plein" target="_blank" rel="noopener" href="${esc(d.Lien_pieces_DN.split(' ').pop())}">Pièces dans DN</a> ` : ''}${d.Lien_dossier_DN ? `<a class="bouton" target="_blank" rel="noopener" href="${esc(d.Lien_dossier_DN.split(' ').pop())}">Dossier dans DN</a>` : ''}</div></div>
     ${modeCorrection ? `<div class="bandeau-correction"><span><b>Mode correction</b> : modifiez les champs voulus. La saisie du déposant est conservée et chaque correction est inscrite au journal.</span>
       <button class="plein" id="corr-ok" ${enCours ? 'disabled' : ''}>Enregistrer les corrections</button><button id="corr-annuler">Annuler</button></div>` : ''}
     <div class="grille"><div>
