@@ -9,6 +9,7 @@
      Les textes du courrier (visas, signataire, phrases) sont lus dans les tables Modeles_Avis et Parametres_avis du document. -->
 <script src="../lib/grist-plugin-api.js"></script>
 <script src="../lib/jspdf.umd.min.js"></script>
+<script src="../lib/navigation.js"></script>
 <style>
   :root {
     --bleu: #000091; --bleu-clair: #e3e3fd; --texte: #161616; --gris: #666; --bord: #ddd; --fond: #f6f6f6;
@@ -120,7 +121,7 @@ const ONGLETS = [
 ];
 
 let data = { dossiers: [], champs: {}, zrr: {}, modeles: {}, params: {} };
-let selection = null, onglet = 'proposer', enCours = false;
+let selection = null, onglet = 'tous', enCours = false;  // à l'ouverture : tous les dossiers (demande de Julien, 14/10)
 let saisie = { proposition: '', motivation: '', decision: '', mesures: '', commentaire: '' };
 
 // --- Accès Grist (ou démo hors Grist) ---------------------------------------------------------
@@ -149,6 +150,7 @@ async function charger() {
     modeles: Object.fromEntries(modeles.map(m => [m.Code, m])),
     params: Object.fromEntries(params.map(p => [p.Cle, p.Valeur])),
   };
+  await Navigation.reperer(T.dossiers).catch(() => {});  // sans repérage, pas de boutons vers les autres écrans
 }
 async function ecrire(actions) {
   if (horsGrist) { console.log('[démo] actions non envoyées', actions); return; }
@@ -219,7 +221,7 @@ function rendreListe() {
 
 // --- Détail ----------------------------------------------------------------------------------
 function ouvrir(id) {
-  selection = id; const d = data.dossiers.find(x => x.id === id);
+  selection = id; Navigation.placer(id); const d = data.dossiers.find(x => x.id === id);
   if (d && !dansOnglet(d, onglet)) { const e = etape(d); onglet = ONGLETS.some(([k]) => k === e) ? e : 'tous'; }  // ouvert par un lien : l'onglet suit le dossier
   saisie = { proposition: d.Proposition_instructeur || '', motivation: d.Motivation_refus || '', decision: d.Avis_final || d.Proposition_instructeur || '', mesures: d.AR3_mesures || '', commentaire: d.Commentaire_avis || '' };
   rendreListe(); rendreDetail();
@@ -248,7 +250,7 @@ function rendreDetail() {
   el.innerHTML = `
     <div class="entete"><div><h2>${esc(b.complet)}</h2>
       <div class="sous">Dossier n° ${esc(d.dossier_number)} · ${esc((data.champs[String(d.dossier_number)] || {}).quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr || '')}</div></div>
-      ${d.Lien_dossier_DN ? `<a class="bouton" target="_blank" rel="noopener" href="${esc(d.Lien_dossier_DN.split(' ').pop())}">Dossier dans DN</a>` : ''}
+      <div>${Navigation.boutons('avis', d.id, esc)} ${d.Lien_dossier_DN ? `<a class="bouton" target="_blank" rel="noopener" href="${esc(d.Lien_dossier_DN.split(' ').pop())}">Dossier dans DN</a>` : ''}</div>
     </div>
     ${etatDossier(d)}
     ${corps}`;
@@ -428,7 +430,9 @@ detail.addEventListener('input', e => {
 async function demarrer() {
   if (!DEMARCHE && !horsGrist) { detail.innerHTML = '<div class="vide">Ajoutez ?demarche=&lt;numéro&gt; à l\'URL du widget.</div>'; return; }
   try { await charger(); } catch (e) { detail.innerHTML = `<div class="vide">Impossible de lire les tables : ${esc(e.message)}</div>`; return; }
-  const premier = data.dossiers.find(d => dansOnglet(d, onglet)) || data.dossiers[0];
+  const voulu = data.dossiers.find(d => d.id === Navigation.demarre());  // arrivé par un lien ou curseur déjà placé
+  const urgents = [...data.dossiers].sort((a, b) => (a.Jours_restants ?? 1e9) - (b.Jours_restants ?? 1e9));  // ordre de la liste
+  const premier = voulu || urgents.find(d => dansOnglet(d, 'proposer')) || urgents[0];
   if (premier && selection == null) return ouvrir(premier.id);
   rendreListe(); rendreDetail();
 }
@@ -463,7 +467,7 @@ else {
   grist.ready({ requiredAccess: 'full' });
   let premier = true;
   grist.onRecords(() => { if (premier) { premier = false; demarrer(); } });
-  grist.onRecord(r => { if (r && r.id !== selection && data.dossiers.some(d => d.id === r.id)) ouvrir(r.id); });
+  Navigation.suivre(id => { if (id !== selection && data.dossiers.some(d => d.id === id)) ouvrir(id); });
   setTimeout(() => { if (premier) { premier = false; demarrer(); } }, 1500);
 }
 </script>

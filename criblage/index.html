@@ -7,6 +7,7 @@
 <title>Criblage</title>
 <!-- Widget Grist : constitution des lots de criblage (export CSV) et saisie des retours. Paramètre d'URL requis : ?demarche=<numéro>. Accès complet requis. -->
 <script src="../lib/grist-plugin-api.js"></script>
+<script src="../lib/navigation.js"></script>
 <style>
   :root { --bleu: #000091; --bleu-clair: #e3e3fd; --texte: #161616; --gris: #666; --bord: #ddd; --fond: #f6f6f6;
           --vert: #18753c; --orange: #b34000; --orange-clair: #ffe9e6; --jaune-clair: #feecc2; --rouge: #ce0500; }
@@ -25,6 +26,11 @@
   th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--bord); vertical-align: middle; }
   th { font-size: 12px; color: var(--gris); font-weight: 600; background: var(--fond); }
   tr.sel td { background: var(--bleu-clair); }
+  tr[data-ligne] { cursor: pointer; }
+  tr.courant td { box-shadow: inset 0 2px 0 var(--bleu), inset 0 -2px 0 var(--bleu); }
+  tr.courant td:first-child { box-shadow: inset 3px 0 0 var(--bleu), inset 0 2px 0 var(--bleu), inset 0 -2px 0 var(--bleu); }
+  .courant-barre { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 0 0 14px; padding: 8px 12px; border-radius: 6px; background: var(--bleu-clair); }
+  a.bouton { text-decoration: none; display: inline-block; }
   .barre { display: flex; gap: 12px; align-items: center; margin: 0 0 12px; flex-wrap: wrap; }
   .compteur { font-weight: 700; font-size: 16px; }
   .compteur.plein { color: var(--orange); }
@@ -66,6 +72,7 @@ const COLONNES_CSV = [
 const ONGLETS = [['envoyer', 'À cribler'], ['cours', 'Lots en cours'], ['differes', 'Différés'], ['faits', 'Criblés']];
 
 let data = { dossiers: [], champs: {} }, onglet = 'envoyer', choisis = new Set(), enCours = false, saisies = {};
+let courant = null;  // dossier suivi (arrivé par un lien ou ligne cliquée) : mis en évidence, avec les boutons vers les autres écrans
 const horsGrist = window.self === window.top;
 const lignes = t => (t.id || []).map((id, i) => { const o = { id }; for (const k in t) o[k] = t[k][i]; return o; });
 // Corrections de l'agent (table Corrections, ajout seul) : la dernière valeur saisie pour un (dossier, champ)
@@ -81,6 +88,7 @@ async function charger() {
   if (horsGrist) { data = demo(); return; }
   const [d, c, k] = await Promise.all([grist.docApi.fetchTable(T.dossiers), grist.docApi.fetchTable(T.champs), grist.docApi.fetchTable('Corrections').catch(() => ({}))]);
   data = { dossiers: lignes(d), champs: Object.fromEntries(corriger(lignes(c), lignes(k)).map(x => [String(x.dossier_number), x])) };
+  await Navigation.reperer(T.dossiers).catch(() => {});  // sans repérage, pas de boutons vers les autres écrans
 }
 async function ecrire(actions) { if (horsGrist) { console.log('[démo]', actions); return; } await grist.docApi.applyUserActions(actions); }
 const journal = (action, detail, dossier) => ['AddRecord', T.journal, null, { Horodatage: Date.now() / 1000, Utilisateur: 'Widget criblage', Action: action, Dossier: dossier || '', Detail: detail }];
@@ -102,8 +110,22 @@ function rendre() {
   document.getElementById('onglets').innerHTML = ONGLETS.map(([k, l]) =>
     `<button data-onglet="${k}" class="${onglet === k ? 'plein' : ''}">${l}<span class="n">${data.dossiers.filter(filtres[k]).length}</span></button>`).join('');
   const el = document.getElementById('contenu');
-  el.innerHTML = onglet === 'envoyer' ? vueEnvoyer() : onglet === 'cours' ? vueLots() : vueListe(onglet);
+  el.innerHTML = barreCourant() + (onglet === 'envoyer' ? vueEnvoyer() : onglet === 'cours' ? vueLots() : vueListe(onglet));
 }
+function barreCourant() {
+  const d = data.dossiers.find(x => x.id === courant); if (!d) return '';
+  return `<div class="courant-barre"><b>Dossier n° ${esc(d.dossier_number)} · ${esc(nom(d))}</b>${d.Criblage_resultat ? ` <span class="badge">${esc(d.Criblage_resultat)}</span>` : ''}
+    <span>${Navigation.boutons('criblage', d.id, esc)}</span></div>`;
+}
+// Suit un dossier : onglet où il se trouve, ligne mise en évidence.
+function suivreDossier(id, changerOnglet) {
+  const d = data.dossiers.find(x => x.id === id); if (!d) return;
+  courant = id; Navigation.placer(id);
+  if (changerOnglet) { const k = Object.keys(filtres).find(k => filtres[k](d)); if (k) onglet = k; }
+  rendre();
+  if (changerOnglet) document.querySelector('tr.courant')?.scrollIntoView({ block: 'center' });
+}
+const attrLigne = d => `data-ligne="${d.id}"`, clsCourant = d => d.id === courant ? ' courant' : '';
 function vueEnvoyer() {
   const ds = data.dossiers.filter(aCribler).sort((a, b) => (a.Jours_restants ?? 1e9) - (b.Jours_restants ?? 1e9));
   if (!ds.length) return '<div class="vide">Aucun dossier à cribler.</div>';
@@ -116,7 +138,7 @@ function vueEnvoyer() {
       <span class="aide">Le fichier est prêt pour le logiciel de chiffrement. La date d'envoi est notée sur chaque dossier.</span>
     </div>
     <table><thead><tr><th></th><th>N° dossier</th><th>Bénéficiaire</th><th>Né(e) le</th><th>Nationalité</th><th>Déposé le</th><th>Délai</th></tr></thead><tbody>
-    ${ds.map(d => `<tr class="${choisis.has(d.id) ? 'sel' : ''}"><td><input type="checkbox" data-id="${d.id}" ${choisis.has(d.id) ? 'checked' : ''} ${!choisis.has(d.id) && n >= MAX_LOT ? 'disabled' : ''}></td>
+    ${ds.map(d => `<tr ${attrLigne(d)} class="${choisis.has(d.id) ? 'sel' : ''}${clsCourant(d)}"><td><input type="checkbox" data-id="${d.id}" ${choisis.has(d.id) ? 'checked' : ''} ${!choisis.has(d.id) && n >= MAX_LOT ? 'disabled' : ''}></td>
       <td>${esc(d.dossier_number)}</td><td>${esc(nom(d))}</td><td>${dateFr(c(d).date_de_naissance_du_beneficiaire)}</td><td>${esc(c(d).nationalite_du_beneficiaire)}</td>
       <td>${dateFr(d.Depot_dt)}</td><td><span class="badge ${d.Jours_restants != null && d.Jours_restants < 15 ? 'alerte' : ''}">${d.Jours_restants ?? '—'} j</span></td></tr>`).join('')}
     </tbody></table>`;
@@ -131,7 +153,7 @@ function vueLots() {
     return `<div class="lot"><div class="tete"><div><b>${esc(lot)}</b> · ${lds.length} dossier(s) · envoyé le ${dateFr(lds[0].Criblage_envoi_date)}
         <span class="badge ${relance ? 'alerte' : ''}">${relance ? `sans réponse depuis ${j} jours : à relancer` : `envoyé il y a ${j} jour(s)`}</span></div>
         <div><button data-tous="${esc(lot)}">Tous inconnus</button> <button class="plein" data-enreg="${esc(lot)}" ${!complet || enCours ? 'disabled' : ''}>Enregistrer le retour</button></div></div>
-      <table><tbody>${lds.map(d => `<tr><td>${esc(d.dossier_number)}</td><td>${esc(nom(d))}</td><td>${dateFr(c(d).date_de_naissance_du_beneficiaire)}</td>
+      <table><tbody>${lds.map(d => `<tr ${attrLigne(d)} class="${clsCourant(d)}"><td>${esc(d.dossier_number)}</td><td>${esc(nom(d))}</td><td>${dateFr(c(d).date_de_naissance_du_beneficiaire)}</td>
         <td class="res">${RESULTATS.map(r => `<button data-res="${r}" data-id="${d.id}" class="${r} ${saisies[d.id] === r ? 'sel' : ''}">${r}</button>`).join(' ')}</td></tr>`).join('')}</tbody></table></div>`;
   }).join('') + '<div class="aide">Différé : le dossier est bloqué, aucun avis ne peut partir tant que le retour n\'est pas arrivé.</div>';
 }
@@ -140,7 +162,7 @@ function vueListe(k) {
   if (!ds.length) return `<div class="vide">Aucun dossier.</div>`;
   const diff = k === 'differes';
   return `<table><thead><tr><th>N° dossier</th><th>Bénéficiaire</th><th>Lot</th><th>Envoyé le</th><th>Retour le</th><th>Résultat</th>${diff ? '<th>En attente depuis</th><th>Retour définitif</th>' : ''}</tr></thead><tbody>
-    ${ds.map(d => `<tr><td>${esc(d.dossier_number)}</td><td>${esc(nom(d))}</td><td>${esc(d.Criblage_lot || '')}</td><td>${dateFr(d.Criblage_envoi_date)}</td><td>${dateFr(d.Criblage_retour_date)}</td>
+    ${ds.map(d => `<tr ${attrLigne(d)} class="${clsCourant(d)}"><td>${esc(d.dossier_number)}</td><td>${esc(nom(d))}</td><td>${esc(d.Criblage_lot || '')}</td><td>${dateFr(d.Criblage_envoi_date)}</td><td>${dateFr(d.Criblage_retour_date)}</td>
       <td class="res"><button class="${d.Criblage_resultat} sel" disabled style="opacity:1">${esc(d.Criblage_resultat)}</button></td>
       ${diff ? `<td>${jours(d.Criblage_retour_date) ?? '—'} jour(s)</td>
       <td class="res">${['Inconnu', 'Connu'].map(r => `<button data-res="${r}" data-id="${d.id}" class="${r} ${saisies[d.id] === r ? 'sel' : ''}">${r}</button>`).join(' ')}
@@ -192,6 +214,8 @@ async function enregistrerDefinitif(id) {  // retour définitif d'un criblage di
 async function verrou(f) { if (enCours) return; enCours = true; rendre(); try { await f(); } catch (e) { toast('Erreur : ' + e.message); } finally { enCours = false; rendre(); } }
 
 document.body.addEventListener('click', e => {
+  const tr = e.target.closest('tr[data-ligne]');  // clic sur une ligne (hors bouton, case ou lien) : ce dossier devient le dossier suivi
+  if (tr && !e.target.closest('button, input, a') && Number(tr.dataset.ligne) !== courant) { suivreDossier(Number(tr.dataset.ligne), false); return; }
   const b = e.target.closest('button'); if (!b || b.disabled) return;
   if (b.dataset.onglet) { onglet = b.dataset.onglet; rendre(); }
   else if (b.id === 'auto') { data.dossiers.filter(aCribler).sort((a, b) => (a.Jours_restants ?? 1e9) - (b.Jours_restants ?? 1e9)).slice(0, MAX_LOT).forEach(d => choisis.add(d.id)); rendre(); }
@@ -210,6 +234,8 @@ document.body.addEventListener('change', e => {
 async function demarrer() {
   if (!DEMARCHE && !horsGrist) { document.getElementById('contenu').innerHTML = '<div class="vide">Ajoutez ?demarche=&lt;numéro&gt; à l\'URL du widget.</div>'; return; }
   try { await charger(); } catch (e) { document.getElementById('contenu').innerHTML = `<div class="vide">Impossible de lire les tables : ${esc(e.message)}</div>`; return; }
+  const voulu = Navigation.demarre({ lienSeulement: true });  // arrivé par le bouton « Criblage » d'un autre écran
+  if (data.dossiers.some(d => d.id === voulu)) return suivreDossier(voulu, true);
   rendre();
 }
 function demo() {
@@ -219,7 +245,10 @@ function demo() {
   return { dossiers, champs: Object.fromEntries(dossiers.map((d, i) => [d.dossier_number, { prenom_s_du_beneficiaire: noms[i][0], nom_de_naissance_du_beneficiaire: noms[i][1], nationalite_du_beneficiaire: 'Syldavie' }])) };
 }
 if (horsGrist) { document.getElementById('demo').hidden = false; demarrer(); }
-else { grist.ready({ requiredAccess: 'full' }); let p = true; grist.onRecords(() => { if (p) { p = false; demarrer(); } }); setTimeout(() => { if (p) { p = false; demarrer(); } }, 1500); }
+else {
+  grist.ready({ requiredAccess: 'full' }); let p = true; grist.onRecords(() => { if (p) { p = false; demarrer(); } }); setTimeout(() => { if (p) { p = false; demarrer(); } }, 1500);
+  Navigation.suivre(id => { if (id !== courant) suivreDossier(id, true); });  // curseur Grist déplacé
+}
 </script>
 </body>
 </html>

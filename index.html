@@ -7,6 +7,7 @@
 <title>Validation des pièces</title>
 <!-- Widget Grist : contrôle des pièces jointes d'un dossier. Paramètre d'URL requis : ?demarche=<numéro>. Accès complet requis. -->
 <script src="lib/grist-plugin-api.js"></script>
+<script src="lib/navigation.js"></script>
 <style>
   :root {
     --bleu: #000091; --bleu-clair: #e3e3fd; --texte: #161616; --gris: #666; --bord: #ddd; --fond: #f6f6f6;
@@ -84,9 +85,9 @@
       <h1>Validation des pièces</h1>
       <input id="recherche" type="search" placeholder="N° de dossier, nom…">
       <div class="filtres">
-        <button id="f-controler" class="plein">À contrôler</button>
+        <button id="f-controler">À contrôler</button>
         <button id="f-correction">En attente de correction</button>
-        <button id="f-tous">Tous</button>
+        <button id="f-tous" class="plein">Tous</button>
       </div>
     </header>
     <div id="liste" class="liste"></div>
@@ -118,7 +119,7 @@ const LIBELLE_STATUT = { 'Valide': 'Valide', 'Partiel': 'Validation partielle', 
 let data = { dossiers: [], champs: {}, zrr: {}, regles: [], motifs: [] };
 let selection = null;      // id de ligne du dossier affiché
 let brouillon = {};        // saisies en cours : { identite: {statut, commentaire}, … }
-let filtre = 'controler';
+let filtre = 'tous';        // à l'ouverture : tous les dossiers (demande de Julien, 14/10)
 let correction = { ids: [], message: '' };  // règles cochées + message en cours
 let enCours = false;       // une écriture est en cours (anti double clic)
 
@@ -153,6 +154,7 @@ async function charger() {
     regles: regles.sort((a, b) => (a.Numero || 0) - (b.Numero || 0)),
     motifs: motifs.sort((a, b) => (a.Ordre || 0) - (b.Ordre || 0)),
   };
+  await Navigation.reperer(T.dossiers).catch(() => {});  // sans repérage, pas de boutons vers les autres écrans
 }
 async function ecrire(actions) {
   if (horsGrist) { console.log('[démo] actions non envoyées', actions); return; }
@@ -199,7 +201,7 @@ function rendreListe() {
 
 // --- Détail ----------------------------------------------------------------------------------
 function ouvrir(id) {
-  selection = id;
+  selection = id; Navigation.placer(id);
   const d = data.dossiers.find(x => x.id === id);
   brouillon = Object.fromEntries(PIECES.map(p => [p.cle, { statut: statutDe(d, p), commentaire: d[`PJ_${p.cle}_commentaire`] || '', motifs: motifsDe(d, p) }]));
   correction = { ids: [], message: '' };
@@ -234,6 +236,7 @@ function rendreDetail() {
         <div class="sous">Dossier n° ${esc(d.dossier_number)} · état DN : ${esc(d.state || '—')} · déposé le ${dateFr(d.Depot_dt ?? d.date_depot)}
           · <span class="badge ${jr != null && jr < 15 ? 'alerte' : ''}">${jr == null ? '—' : jr + ' jours restants'}</span></div></div>
       <div class="liens">
+        ${Navigation.boutons('pieces', d.id, esc)}
         ${d.Lien_pieces_DN ? `<a class="bouton plein" target="_blank" rel="noopener" href="${esc(lienUrl(d.Lien_pieces_DN))}">Ouvrir les pièces dans DN</a>` : ''}
         ${d.Lien_dossier_DN ? `<a class="bouton" target="_blank" rel="noopener" href="${esc(lienUrl(d.Lien_dossier_DN))}">Dossier complet</a>` : ''}
       </div>
@@ -384,8 +387,10 @@ async function verrou(action) {  // une seule écriture à la fois
 async function demarrer() {
   if (!DEMARCHE && !horsGrist) { detail.innerHTML = '<div class="vide">Ajoutez ?demarche=&lt;numéro&gt; à l\'URL du widget.</div>'; return; }
   try { await charger(); } catch (e) { detail.innerHTML = `<div class="vide">Impossible de lire les tables de la démarche ${esc(DEMARCHE)} : ${esc(e.message)}</div>`; return; }
+  const voulu = data.dossiers.find(d => d.id === Navigation.demarre());  // arrivé par un lien ou curseur déjà placé
   if (selection == null || !data.dossiers.some(d => d.id === selection)) {
-    const premier = data.dossiers.find(aControler) || data.dossiers[0]; if (premier) return ouvrir(premier.id);
+    const urgents = [...data.dossiers].sort((a, b) => (a.Jours_restants ?? 1e9) - (b.Jours_restants ?? 1e9));  // ordre de la liste
+    const premier = voulu || urgents.find(aControler) || urgents[0]; if (premier) return ouvrir(premier.id);
   }
   rendreListe(); rendreDetail();
 }
@@ -421,7 +426,7 @@ else {
   grist.ready({ requiredAccess: 'full' });
   let premier = true;
   grist.onRecords(() => { if (premier) { premier = false; demarrer(); } });  // table liée au widget
-  grist.onRecord(r => { if (r && r.id !== selection && data.dossiers.some(d => d.id === r.id)) ouvrir(r.id); });  // suit la sélection Grist
+  Navigation.suivre(id => { if (id !== selection && data.dossiers.some(d => d.id === id)) ouvrir(id); });  // suit le curseur Grist
   setTimeout(() => { if (premier) { premier = false; demarrer(); } }, 1500);  // si le widget n'est lié à aucune table
 }
 </script>

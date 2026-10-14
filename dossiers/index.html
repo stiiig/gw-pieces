@@ -9,6 +9,7 @@
      correction d'une donnée par l'agent : table Corrections en ajout seul, valeur d'origine conservée et affichée).
      Paramètre d'URL requis : ?demarche=<numéro>. Accès complet requis. -->
 <script src="../lib/grist-plugin-api.js"></script>
+<script src="../lib/navigation.js"></script>
 <style>
   :root { --bleu: #000091; --bleu-clair: #e3e3fd; --texte: #161616; --gris: #666; --bord: #ddd; --fond: #f6f6f6;
           --vert: #18753c; --orange: #b34000; --orange-clair: #ffe9e6; --jaune: #d69a00; --jaune-clair: #feecc2; --rouge: #ce0500; }
@@ -55,6 +56,11 @@
   .bandeau-correction { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--jaune-clair); border: 1px solid var(--jaune); border-radius: 8px; padding: 10px 14px; margin-top: 12px; }
   .bandeau-correction span { flex: 1; min-width: 260px; }
   dd.corrige { color: var(--bleu); } .origine { display: block; font-size: 11.5px; font-weight: 400; color: var(--gris); }
+  /* Texte long (résumé de la mission…) : toute la largeur de la rubrique, replié sur 4 lignes avec « Voir tout » */
+  dl > div.long { grid-column: 1 / -1; }
+  .replie .texte { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+  .replie .origine { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  button.voir { border: none; background: none; padding: 2px 0; font-size: 12.5px; text-decoration: underline; }
   .edition input { font: inherit; padding: 4px 7px; border: 1px solid var(--bleu); border-radius: 4px; width: 100%; margin-bottom: 4px; }
 </style>
 </head>
@@ -70,6 +76,8 @@ const AVIS = { AF: 'Favorable', AF1: 'Favorable avec précautions', AR1: 'Réser
 const PIECES = [['identite', "Pièce d'identité"], ['cv', 'CV'], ['mission', 'Mission'], ['financement', 'Financement']];
 
 let data = { dossiers: [], champs: {}, zrr: {}, refZrr: [], refPays: [], utilisateurs: [] };
+let deplies = new Set();  // textes longs dépliés sur la fiche (clé du champ)
+const LONG = 240;        // au-delà, le texte est replié
 let vue = 'liste', selection = null, filtre = '', compteur = '', instructeur = '', recherche = '', modeCorrection = false, enCours = false;
 const horsGrist = window.self === window.top;
 const lignes = t => (t.id || []).map((id, i) => { const o = { id }; for (const k in t) o[k] = t[k][i]; return o; });
@@ -79,30 +87,8 @@ async function charger() {
   const [d, c, z, rz, rp, u, k] = await Promise.all([lire(T.dossiers), lire(T.champs), lire(T.zrr, true), lire(T.refZrr, true), lire(T.refPays, true), lire(T.utilisateurs, true), lire(T.corrections, true)]);
   data = { dossiers: d, champs: Object.fromEntries(corriger(c, k).map(x => [String(x.dossier_number), x])),
     zrr: z.reduce((a, x) => ((a[String(x.dossier_number)] ||= []).push(x.numero_de_la_zrr), a), {}), refZrr: rz, refPays: rp, utilisateurs: u };
-  ecrans = await reperer().catch(() => ({}));
+  await Navigation.reperer(T.dossiers).catch(() => {});  // sans repérage, pas de boutons vers les autres écrans
 }
-// Liens directs depuis la fiche vers les autres écrans, positionnés sur le dossier (ancre Grist #a1.s<section>.r<ligne>.c<colonne>).
-// Les écrans sont repérés dans les métadonnées du document par le dossier de leur adresse ; la racine = validation des pièces.
-let ecrans = {};
-async function reperer() {
-  const [sec, pages, tables, cols, jeton] = await Promise.all(['_grist_Views_section', '_grist_Pages', '_grist_Tables', '_grist_Tables_column']
-    .map(t => grist.docApi.fetchTable(t).then(lignes)).concat(grist.docApi.getAccessToken({ readOnly: true })));
-  const m = /^(https?:\/\/[^/]+)(.*)\/api\/docs\/([^/?#]+)/.exec(jeton.baseUrl || ''); if (!m) return {};
-  const base = `${m[1]}${m[2] || '/o/docs'}/${m[3]}`;
-  const table = (tables.find(t => t.tableId === T.dossiers) || {}).id;
-  const col = (cols.find(c => c.parentId === table && c.colId === 'dossier_number') || {}).id;
-  const out = {};
-  for (const sct of sec) {
-    if (sct.tableRef !== table || !sct.options) continue;
-    let url; try { url = new URL(JSON.parse(JSON.parse(sct.options).customView || '{}').url); } catch (e) { continue; }
-    const dossier = url.pathname.split('/').filter(Boolean).pop();
-    const nom = { avis: 'avis', criblage: 'criblage' }[dossier] || (['dossiers', 'export', 'tableau-de-bord', 'espace'].includes(dossier) ? null : 'pieces');
-    const page = pages.find(p => p.viewRef === sct.parentId);
-    if (nom && page) out[nom] = { page: page.id, section: sct.id, col, base };
-  }
-  return out;
-}
-const lienEcran = (nom, rowId) => { const e = ecrans[nom]; return e ? `${e.base}/p/${e.page}#a1.s${e.section}.r${rowId}.c${e.col}` : ''; };
 // Corrections de l'agent : la dernière ligne de Corrections pour un (dossier, champ) remplace la valeur du formulaire ;
 // la valeur d'origine reste dans la table synchronisée et dans _origine. Dates corrigées au format AAAA-MM-JJ.
 const estDate = k => /^date_/.test(k);
@@ -217,14 +203,15 @@ function rendreFiche() {
     if (modeCorrection && modifiable) return `<div class="edition"><dt>${esc(l)}${badge}</dt><dd><input data-champ="${k}" type="${estDate(k) ? 'date' : 'text'}" value="${esc(estDate(k) ? iso(v) : v ?? '')}"></dd></div>`;
     if (vide && !corr) return '';
     const o = corr ? (f ? f(c._origine[k]) : c._origine[k]) : null;
-    return `<div><dt>${esc(l)}${badge}</dt><dd class="${corr ? 'corrige' : ''}">${esc(vide ? '—' : s)}${corr ? `<span class="origine">Saisi par le déposant : ${esc(o === '' || o == null ? '(vide)' : o)} · corrigé par ${esc(corr.Auteur_nom || corr.Auteur || '')} le ${dateFr(corr.Horodatage)}</span>` : ''}</dd></div>`; };
+    const long = String(s ?? '').length > LONG, replie = long && !deplies.has(k);
+    return `<div class="${long ? 'long' : ''}"><dt>${esc(l)}${badge}</dt><dd class="${corr ? 'corrige' : ''} ${replie ? 'replie' : ''}"><span class="texte">${esc(vide ? '—' : s)}</span>${corr ? `<span class="origine">Saisi par le déposant : ${esc(o === '' || o == null ? '(vide)' : o)} · corrigé par ${esc(corr.Auteur_nom || corr.Auteur || '')} le ${dateFr(corr.Horodatage)}</span>` : ''}${long ? `<button class="voir" data-voir="${k}">${replie ? 'Voir tout ▾' : 'Réduire ▴'}</button>` : ''}</dd></div>`; };
   const modifiable = (t, [k, , f]) => t !== 'Pièces jointes' && f !== OUI && f !== adresse && k !== 'montant_du_financement_en_euros';
   const statut = s => s ? `<span class="badge ${s === 'Valide' ? 'b-vert' : s === 'Non valide' ? 'b-rouge' : 'b-jaune'}">${esc(s === 'Partiel' ? 'Validation partielle' : s)}</span>` : '<span class="sous">non contrôlée</span>';
   document.getElementById('contenu').innerHTML = `
     <button id="retour">← Tous les dossiers</button>
     <div class="fiche-haut"><div><h2>${esc([c.prenom_s_du_beneficiaire, c.nom_de_naissance_du_beneficiaire].filter(Boolean).join(' '))}</h2>
       <div class="sous">Dossier n° ${esc(d.dossier_number)} · reçu le ${dateFr(d.Depot_dt)} · ${etatBadge(d)}${badgeConnu(d)} ${d.label_names ? '· ' + esc(d.label_names) : ''}${nCorr ? ` · <span class="badge b-jaune">${nCorr} donnée${nCorr > 1 ? 's' : ''} corrigée${nCorr > 1 ? 's' : ''}</span>` : ''}</div></div>
-      <div>${[['pieces', 'Pièces'], ['criblage', 'Criblage'], ['avis', 'Avis']].map(([k, l]) => lienEcran(k, d.id) ? `<a class="bouton" target="_top" href="${esc(lienEcran(k, d.id))}">${l} →</a> ` : '').join('')}${modeCorrection ? '' : '<button id="mode-correction">✎ Corriger des données</button> '}${d.Lien_pieces_DN ? `<a class="bouton plein" target="_blank" rel="noopener" href="${esc(d.Lien_pieces_DN.split(' ').pop())}">Pièces dans DN</a> ` : ''}${d.Lien_dossier_DN ? `<a class="bouton" target="_blank" rel="noopener" href="${esc(d.Lien_dossier_DN.split(' ').pop())}">Dossier dans DN</a>` : ''}</div></div>
+      <div>${Navigation.boutons('fiche', d.id, esc)} ${modeCorrection ? '' : '<button id="mode-correction">✎ Corriger des données</button> '}${d.Lien_pieces_DN ? `<a class="bouton plein" target="_blank" rel="noopener" href="${esc(d.Lien_pieces_DN.split(' ').pop())}">Pièces dans DN</a> ` : ''}${d.Lien_dossier_DN ? `<a class="bouton" target="_blank" rel="noopener" href="${esc(d.Lien_dossier_DN.split(' ').pop())}">Dossier dans DN</a>` : ''}</div></div>
     ${modeCorrection ? `<div class="bandeau-correction"><span><b>Mode correction</b> : modifiez les champs voulus. La saisie du déposant est conservée et chaque correction est inscrite au journal.</span>
       <button class="plein" id="corr-ok" ${enCours ? 'disabled' : ''}>Enregistrer les corrections</button><button id="corr-annuler">Annuler</button></div>` : ''}
     <div class="grille"><div>
@@ -249,16 +236,18 @@ function rendreFiche() {
     </div></div>`;
 }
 function rendre() { vue === 'fiche' ? rendreFiche() : rendreListe(); }
+function ouvrirFiche(id) { if (id !== selection) deplies.clear(); selection = id; vue = 'fiche'; modeCorrection = false; Navigation.placer(id); rendre(); window.scrollTo(0, 0); }
 
 document.body.addEventListener('click', e => {
   const b = e.target.closest('button');
   if (b?.dataset.compteur) { compteur = compteur === b.dataset.compteur ? '' : b.dataset.compteur; rendre(); return; }
   if (b?.dataset.filtre) { filtre = filtre === b.dataset.filtre ? '' : b.dataset.filtre; rendre(); return; }
+  if (b?.dataset.voir) { const k = b.dataset.voir; deplies.has(k) ? deplies.delete(k) : deplies.add(k); rendre(); return; }
   if (b?.id === 'retour') { vue = 'liste'; modeCorrection = false; rendre(); return; }
   if (b?.id === 'mode-correction') { modeCorrection = true; rendre(); return; }
   if (b?.id === 'corr-annuler') { modeCorrection = false; rendre(); return; }
   if (b?.id === 'corr-ok') { enregistrerCorrections(); return; }
-  const tr = e.target.closest('tr[data-id]'); if (tr) { selection = Number(tr.dataset.id); vue = 'fiche'; rendre(); window.scrollTo(0, 0); }
+  const tr = e.target.closest('tr[data-id]'); if (tr) ouvrirFiche(Number(tr.dataset.id));
 });
 document.body.addEventListener('keydown', e => { if (e.target.dataset?.champ && e.key === 'Enter') enregistrerCorrections(); if (modeCorrection && e.key === 'Escape') { modeCorrection = false; rendre(); } });
 document.body.addEventListener('input', e => { if (e.target.id === 'recherche') { recherche = e.target.value; const p = e.target.selectionStart; rendre(); const r = document.getElementById('recherche'); r.focus(); r.setSelectionRange(p, p); } });
@@ -302,6 +291,8 @@ async function enregistrerCorrections() {
 async function demarrer() {
   if (!DEMARCHE && !horsGrist) { document.getElementById('contenu').innerHTML = '<div class="vide">Ajoutez ?demarche=&lt;numéro&gt; à l\'URL du widget.</div>'; return; }
   try { await charger(); } catch (e) { document.getElementById('contenu').innerHTML = `<div class="vide">Impossible de lire les tables : ${esc(e.message)}</div>`; return; }
+  const voulu = Navigation.demarre({ lienSeulement: true });  // arrivé par le bouton « Détail » d'un autre écran : la fiche
+  if (data.dossiers.some(d => d.id === voulu)) return ouvrirFiche(voulu);
   rendre();
 }
 function demo() {  // entièrement fictif
@@ -313,7 +304,7 @@ function demo() {  // entièrement fictif
     { id: 4, dossier_number: '90000004', Depot_dt: auj - 400 * 86400, Avis_final: 'AF', Avis_date: auj - 380 * 86400, Deja_connu: true },
   ];
   dossiers[0].Deja_connu = true;
-  const brut = { '90000001': { prenom_s_du_beneficiaire: 'Tintin', nom_de_naissance_du_beneficiaire: 'RÉPORTER', date_de_naissance_du_beneficiaire: Date.UTC(1929, 0, 10) / 1000, nationalite_du_beneficiaire: 'Syldavie', quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr: 'Institut fictif' },
+  const brut = { '90000001': { prenom_s_du_beneficiaire: 'Tintin', nom_de_naissance_du_beneficiaire: 'RÉPORTER', date_de_naissance_du_beneficiaire: Date.UTC(1929, 0, 10) / 1000, nationalite_du_beneficiaire: 'Syldavie', quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr: 'Institut fictif', resume_de_la_mission_et_de_l_activite_sujet_theme_prevue_au_sein_de_la_zrr: '• Mission fictive : ' + 'texte de démonstration volontairement long pour vérifier le repli. '.repeat(12) },
     '90000002': { prenom_s_du_beneficiaire: 'Bianca', nom_de_naissance_du_beneficiaire: 'CASTAFIORE', nationalite_du_beneficiaire: 'Bordurie', autre_nationalite_du_beneficiaire: 'Syldavie' },
     '90000003': { prenom_s_du_beneficiaire: 'Tryphon', nom_de_naissance_du_beneficiaire: 'TOURNESOL', nationalite_du_beneficiaire: 'Belgistan' },
     '90000004': { prenom_s_du_beneficiaire: 'Tintin', nom_de_naissance_du_beneficiaire: 'RÉPORTER', date_de_naissance_du_beneficiaire: Date.UTC(1929, 0, 10) / 1000, nationalite_du_beneficiaire: 'Syldavie', quel_est_le_nom_de_l_etablissement_hebergeur_de_la_zrr: 'Institut fictif' } };
@@ -323,7 +314,10 @@ function demo() {  // entièrement fictif
     utilisateurs: [{ id: 1, Nom: 'Agent fictif 1', Role: 'Instructeur' }, { id: 2, Nom: 'Agent fictif 2', Role: 'Instructeur' }] };
 }
 if (horsGrist) { document.getElementById('demo').hidden = false; demarrer(); }
-else { grist.ready({ requiredAccess: 'full' }); let p = true; grist.onRecords(() => { if (p) { p = false; demarrer(); } }); setTimeout(() => { if (p) { p = false; demarrer(); } }, 1500); }
+else {
+  grist.ready({ requiredAccess: 'full' }); let p = true; grist.onRecords(() => { if (p) { p = false; demarrer(); } }); setTimeout(() => { if (p) { p = false; demarrer(); } }, 1500);
+  Navigation.suivre(id => { if (vue === 'fiche' && id !== selection && data.dossiers.some(d => d.id === id)) ouvrirFiche(id); });  // fiche ouverte : suit le curseur Grist
+}
 </script>
 </body>
 </html>
