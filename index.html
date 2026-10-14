@@ -387,7 +387,7 @@ async function verrou(action) {  // une seule écriture à la fois
 async function demarrer() {
   if (!DEMARCHE && !horsGrist) { detail.innerHTML = '<div class="vide">Ajoutez ?demarche=&lt;numéro&gt; à l\'URL du widget.</div>'; return; }
   try { await charger(); } catch (e) { detail.innerHTML = `<div class="vide">Impossible de lire les tables de la démarche ${esc(DEMARCHE)} : ${esc(e.message)}</div>`; return; }
-  const voulu = data.dossiers.find(d => d.id === Navigation.demarre());  // arrivé par un lien ou curseur déjà placé
+  const demande = Navigation.demarre(), voulu = data.dossiers.find(d => d.id === demande);  // arrivé par un lien ou curseur déjà placé
   if (selection == null || !data.dossiers.some(d => d.id === selection)) {
     const urgents = [...data.dossiers].sort((a, b) => (a.Jours_restants ?? 1e9) - (b.Jours_restants ?? 1e9));  // ordre de la liste
     const premier = voulu || urgents.find(aControler) || urgents[0]; if (premier) return ouvrir(premier.id);

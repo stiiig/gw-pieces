@@ -430,7 +430,7 @@ detail.addEventListener('input', e => {
 async function demarrer() {
   if (!DEMARCHE && !horsGrist) { detail.innerHTML = '<div class="vide">Ajoutez ?demarche=&lt;numéro&gt; à l\'URL du widget.</div>'; return; }
   try { await charger(); } catch (e) { detail.innerHTML = `<div class="vide">Impossible de lire les tables : ${esc(e.message)}</div>`; return; }
-  const voulu = data.dossiers.find(d => d.id === Navigation.demarre());  // arrivé par un lien ou curseur déjà placé
+  const demande = Navigation.demarre(), voulu = data.dossiers.find(d => d.id === demande);  // arrivé par un lien ou curseur déjà placé
   const urgents = [...data.dossiers].sort((a, b) => (a.Jours_restants ?? 1e9) - (b.Jours_restants ?? 1e9));  // ordre de la liste
   const premier = voulu || urgents.find(d => dansOnglet(d, 'proposer')) || urgents[0];
   if (premier && selection == null) return ouvrir(premier.id);
